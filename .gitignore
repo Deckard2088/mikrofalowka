@@ -1,0 +1,48 @@
+# =========================
+#ZGADZA SIĘ, ZROBIŁEM GITIGNOR'A Z CHATEM. I CO? KTO MI ZABRONI?
+# BUILD FOLDERS
+# =========================
+Debug/
+Release/
+build/
+
+# =========================
+# BINARIES / OUTPUT FILES
+# =========================
+*.axf
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+
+# =========================
+# OBJECT FILES
+# =========================
+*.o
+*.d
+
+# =========================
+# LOGS / TEMP
+# =========================
+*.log
+*.tmp
+
+# =========================
+# ECLIPSE / MCUXPRESSO
+# =========================
+.metadata/
+.settings/
+
+# =========================
+# SYSTEM FILES
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# OPTIONAL (odkomentuj jeśli chcesz)
+# =========================
+
+*.cproject
+*.project
