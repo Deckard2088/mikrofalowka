@@ -22,10 +22,38 @@
 #define CHECKPOINT_ADC_FUNC    1
 
 static uint32_t readAdcAverage(uint8_t channel);
+static uint8_t trimToTurns(uint32_t trim);
 
 static uint8_t trimToTurns(uint32_t trim)
 {
-    uint32_t turns = (trim * 10) / 4096;
+    static uint32_t observedMin = 4095;
+    static uint32_t observedMax = 0;
+    uint32_t span = 0;
+    uint32_t turns = 0;
+
+    if (trim < observedMin) {
+        observedMin = trim;
+    }
+
+    if (trim > observedMax) {
+        observedMax = trim;
+    }
+
+    span = (observedMax > observedMin) ? (observedMax - observedMin) : 0;
+
+    if (span < 32) {
+        return 0;
+    }
+
+    if (trim <= observedMin) {
+        return 0;
+    }
+
+    if (trim >= observedMax) {
+        return 9;
+    }
+
+    turns = ((trim - observedMin) * 10) / span;
 
     if (turns > 9) {
         turns = 9;
