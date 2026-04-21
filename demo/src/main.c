@@ -22,10 +22,15 @@
 #include "oled.h"
 #include "rgb.h"
 
-#define CHECKPOINT_ADC_CHANNEL ADC_CHANNEL_5
-#define CHECKPOINT_ADC_PORT    1
-#define CHECKPOINT_ADC_PIN     31
-#define CHECKPOINT_ADC_FUNC    3
+#define CHECKPOINT_ADC_A_CHANNEL ADC_CHANNEL_0
+#define CHECKPOINT_ADC_A_PORT    0
+#define CHECKPOINT_ADC_A_PIN     23
+#define CHECKPOINT_ADC_A_FUNC    1
+
+#define CHECKPOINT_ADC_B_CHANNEL ADC_CHANNEL_5
+#define CHECKPOINT_ADC_B_PORT    1
+#define CHECKPOINT_ADC_B_PIN     31
+#define CHECKPOINT_ADC_B_FUNC    3
 
 static uint8_t barPos = 2;
 
@@ -138,17 +143,26 @@ static void updateCheckpointDisplayAndLed(uint32_t trim, uint8_t rotaryDir)
 
 static uint32_t readTrimFiltered(void)
 {
-    uint32_t sum = 0;
-    uint32_t i = 0;
+    static uint8_t selectedB = 1;
+    uint32_t trimA = readAdcAverage(CHECKPOINT_ADC_A_CHANNEL);
+    uint32_t trimB = readAdcAverage(CHECKPOINT_ADC_B_CHANNEL);
 
-    /* Average a few ADC samples to reduce trimpot noise and threshold jitter. */
-    for (i = 0; i < 8; i++) {
-        ADC_StartCmd(LPC_ADC,ADC_START_NOW);
-        while (!(ADC_ChannelGetStatus(LPC_ADC,CHECKPOINT_ADC_CHANNEL,ADC_DATA_DONE)));
-        sum += ADC_ChannelGetData(LPC_ADC,CHECKPOINT_ADC_CHANNEL);
+    /*
+     * Auto-select active trimpot. Keep previous selection unless the other
+     * input is clearly stronger to avoid flicker between channels.
+     */
+    if (selectedB) {
+        if (trimA > (trimB + 120)) {
+            selectedB = 0;
+        }
+    }
+    else {
+        if (trimB > (trimA + 120)) {
+            selectedB = 1;
+        }
     }
 
-    return (sum / 8);
+    return selectedB ? trimB : trimA;
 }
 
 static uint8_t readRotaryEventNonBlocking(void)
@@ -172,6 +186,20 @@ static uint8_t readRotaryEventNonBlocking(void)
 
     prevState = currState;
     return event;
+}
+
+static uint32_t readAdcAverage(uint8_t channel)
+{
+    uint32_t sum = 0;
+    uint32_t i = 0;
+
+    for (i = 0; i < 8; i++) {
+        ADC_StartCmd(LPC_ADC,ADC_START_NOW);
+        while (!(ADC_ChannelGetStatus(LPC_ADC,channel,ADC_DATA_DONE)));
+        sum += ADC_ChannelGetData(LPC_ADC,channel);
+    }
+
+    return (sum / 8);
 }
 
 #define NOTE_PIN_HIGH() GPIO_SetValue(0, 1<<26);
@@ -355,22 +383,29 @@ static void init_adc(void)
 
 	/*
 	 * Init ADC pin connect
-     * AD0.5 on P1.31 (second potentiometer)
+     * AD0.0 on P0.23 and AD0.5 on P1.31
 	 */
-    PinCfg.Funcnum = CHECKPOINT_ADC_FUNC;
+    PinCfg.Funcnum = CHECKPOINT_ADC_A_FUNC;
 	PinCfg.OpenDrain = 0;
 	PinCfg.Pinmode = 0;
-    PinCfg.Pinnum = CHECKPOINT_ADC_PIN;
-    PinCfg.Portnum = CHECKPOINT_ADC_PORT;
+    PinCfg.Pinnum = CHECKPOINT_ADC_A_PIN;
+    PinCfg.Portnum = CHECKPOINT_ADC_A_PORT;
+    PINSEL_ConfigPin(&PinCfg);
+
+    PinCfg.Funcnum = CHECKPOINT_ADC_B_FUNC;
+    PinCfg.Pinnum = CHECKPOINT_ADC_B_PIN;
+    PinCfg.Portnum = CHECKPOINT_ADC_B_PORT;
 	PINSEL_ConfigPin(&PinCfg);
 
 	/* Configuration for ADC :
 	 * 	Frequency at 0.2Mhz
-     *  ADC selected channel, no Interrupt
+     *  ADC channels 0 and 5, no Interrupt
 	 */
 	ADC_Init(LPC_ADC, 200000);
-    ADC_IntConfig(LPC_ADC,CHECKPOINT_ADC_CHANNEL,DISABLE);
-    ADC_ChannelCmd(LPC_ADC,CHECKPOINT_ADC_CHANNEL,ENABLE);
+    ADC_IntConfig(LPC_ADC,CHECKPOINT_ADC_A_CHANNEL,DISABLE);
+    ADC_IntConfig(LPC_ADC,CHECKPOINT_ADC_B_CHANNEL,DISABLE);
+    ADC_ChannelCmd(LPC_ADC,CHECKPOINT_ADC_A_CHANNEL,ENABLE);
+    ADC_ChannelCmd(LPC_ADC,CHECKPOINT_ADC_B_CHANNEL,ENABLE);
 
 }
 
