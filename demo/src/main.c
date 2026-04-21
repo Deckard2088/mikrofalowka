@@ -112,33 +112,14 @@ static void buzzerPlayTone(uint32_t periodUs, uint32_t durationMs)
     }
 }
 
-static void buzzerAlertTick(uint8_t enabled)
+static void buzzerZeroPulse(void)
 {
-    static uint32_t ms = 0;
-    static uint8_t phase = 0;
-
-    if (!enabled) {
-        ms = 0;
-        phase = 0;
-        BUZZER_PIN_LOW();
-        return;
-    }
-
-    if (++ms >= 180) {
-        ms = 0;
-
-        if (phase == 0) {
-            buzzerPlayTone(700, 35);
-        }
-        else if (phase == 1) {
-            buzzerPlayTone(430, 30);
-        }
-        else {
-            buzzerPlayTone(900, 20);
-        }
-
-        phase = (uint8_t)((phase + 1) % 3);
-    }
+    /* Short annoying triple beep when zero is reached. */
+    buzzerPlayTone(700, 25);
+    Timer0_Wait(25);
+    buzzerPlayTone(430, 25);
+    Timer0_Wait(25);
+    buzzerPlayTone(900, 25);
 }
 
 static void init_ssp(void)
@@ -171,6 +152,7 @@ int main (void) {
 
     uint8_t rotaryState = 0;
     uint32_t elapsedMs = 0;
+    uint8_t lastCh7seg = '0';
 
     init_ssp();
 
@@ -197,7 +179,13 @@ int main (void) {
             }
         }
 
-        buzzerAlertTick(ch7seg == '0');
+        if (ch7seg == '0' && lastCh7seg != '0') {
+            /* Zero reached: short beep only once. */
+            buzzerZeroPulse();
+            refreshOutputs();
+        }
+
+        lastCh7seg = ch7seg;
 
         Timer0_Wait(1);
     }
