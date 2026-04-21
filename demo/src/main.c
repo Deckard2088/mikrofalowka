@@ -17,6 +17,8 @@
 #include "rgb.h"
 
 #define AUTO_DECAY_INTERVAL_MS 5000
+#define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
+#define BUZZER_PIN_LOW()  GPIO_ClearValue(0, 1<<26)
 
 static uint8_t ch7seg = '0';
 
@@ -81,6 +83,64 @@ static uint8_t change7Seg(uint8_t rotaryDir)
     return 0;
 }
 
+static void init_buzzer(void)
+{
+    /* Speaker amplifier control and buzzer output pin. */
+    GPIO_SetDir(0, 1<<27, 1);
+    GPIO_SetDir(0, 1<<28, 1);
+    GPIO_SetDir(2, 1<<13, 1);
+    GPIO_SetDir(0, 1<<26, 1);
+
+    GPIO_ClearValue(0, 1<<27);
+    GPIO_ClearValue(0, 1<<28);
+    GPIO_ClearValue(2, 1<<13);
+    BUZZER_PIN_LOW();
+}
+
+static void buzzerPlayTone(uint32_t periodUs, uint32_t durationMs)
+{
+    uint32_t elapsed = 0;
+
+    while (elapsed < (durationMs * 1000)) {
+        BUZZER_PIN_HIGH();
+        Timer0_us_Wait(periodUs / 2);
+
+        BUZZER_PIN_LOW();
+        Timer0_us_Wait(periodUs / 2);
+
+        elapsed += periodUs;
+    }
+}
+
+static void buzzerAlertTick(uint8_t enabled)
+{
+    static uint32_t ms = 0;
+    static uint8_t phase = 0;
+
+    if (!enabled) {
+        ms = 0;
+        phase = 0;
+        BUZZER_PIN_LOW();
+        return;
+    }
+
+    if (++ms >= 180) {
+        ms = 0;
+
+        if (phase == 0) {
+            buzzerPlayTone(700, 35);
+        }
+        else if (phase == 1) {
+            buzzerPlayTone(430, 30);
+        }
+        else {
+            buzzerPlayTone(900, 20);
+        }
+
+        phase = (uint8_t)((phase + 1) % 3);
+    }
+}
+
 static void init_ssp(void)
 {
     SSP_CFG_Type SSP_ConfigStruct;
@@ -117,6 +177,7 @@ int main (void) {
     rotary_init();
     led7seg_init();
     rgb_init();
+    init_buzzer();
 
     refreshOutputs();
 
@@ -135,6 +196,8 @@ int main (void) {
                 refreshOutputs();
             }
         }
+
+        buzzerAlertTick(ch7seg == '0');
 
         Timer0_Wait(1);
     }
