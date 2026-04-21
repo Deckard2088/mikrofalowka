@@ -18,6 +18,34 @@
 
 static uint8_t ch7seg = '0';
 
+static uint8_t rotate7SegChar(uint8_t ch)
+{
+    switch (ch) {
+    case '0':
+        return '0';
+    case '1':
+        return '1';
+    case '2':
+        return 'S';
+    case '3':
+        return 'E';
+    case '4':
+        return 'h';
+    case '5':
+        return '5';
+    case '6':
+        return '9';
+    case '7':
+        return 'L';
+    case '8':
+        return '8';
+    case '9':
+        return '6';
+    default:
+        return ch;
+    }
+}
+
 static void change7Seg(uint8_t rotaryDir)
 {
     if (rotaryDir != ROTARY_WAIT) {
@@ -34,7 +62,7 @@ static void change7Seg(uint8_t rotaryDir)
         else if (ch7seg < '0')
             ch7seg = '9';
 
-        led7seg_setChar(ch7seg, FALSE);
+        led7seg_setChar(rotate7SegChar(ch7seg), FALSE);
     }
 }
 
@@ -78,7 +106,7 @@ int main (void) {
     rgb_setLeds(0);
 
     while (1) {
-
+//dziala
         rotaryState = rotary_read();
         change7Seg(rotaryState);
 
