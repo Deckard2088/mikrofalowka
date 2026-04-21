@@ -41,29 +41,6 @@ static void moveBar(uint8_t steps, uint8_t dir)
     pca9532_setLeds(ledOn, 0xffff);
 }
 
-static uint8_t ch7seg = '0';
-static void change7Seg(uint8_t rotaryDir)
-{
-
-    if (rotaryDir != ROTARY_WAIT) {
-
-        if (rotaryDir == ROTARY_RIGHT) {
-            ch7seg++;
-        }
-        else {
-            ch7seg--;
-        }
-
-        if (ch7seg > '9')
-            ch7seg = '0';
-        else if (ch7seg < '0')
-            ch7seg = '9';
-
-        led7seg_setChar(ch7seg, FALSE);
-
-    }
-}
-
 static void drawOled(uint8_t joyState)
 {
     static int wait = 0;
@@ -105,13 +82,64 @@ static void drawOled(uint8_t joyState)
     }
 }
 
-static void changeRgbLeds(uint32_t value)
+static uint8_t targetTurns = 0;
+static uint8_t currentTurns = 0;
+
+static uint8_t trimToTurns(uint32_t trim)
 {
-    uint8_t leds = 0;
+    uint32_t turns = 0;
 
-    leds = value / 128;
+    /*
+     * Add a dead zone near zero to avoid false non-zero targets caused by ADC noise
+     * or trimpot not reaching an electrical zero.
+     */
+    if (trim < 512) {
+        return 0;
+    }
 
-    rgb_setLeds(leds);
+    turns = (trim * 10) / 4096;
+
+    if (turns > 9) {
+        turns = 9;
+    }
+
+    return (uint8_t)turns;
+}
+
+static void updateCheckpointDisplayAndLed(uint32_t trim, uint8_t rotaryDir)
+{
+    uint8_t newTarget = trimToTurns(trim);
+
+    if (newTarget == 0) {
+        targetTurns = 0;
+        currentTurns = 0;
+        led7seg_setChar((uint8_t)('0'), FALSE);
+        rgb_setLeds(0);
+        return;
+    }
+
+    if (newTarget != targetTurns) {
+        targetTurns = newTarget;
+        led7seg_setChar((uint8_t)('0' + targetTurns), FALSE);
+    }
+
+    if (rotaryDir == ROTARY_RIGHT) {
+        if (currentTurns < 99) {
+            currentTurns++;
+        }
+    }
+    else if (rotaryDir == ROTARY_LEFT) {
+        if (currentTurns > 0) {
+            currentTurns--;
+        }
+    }
+
+    if ((currentTurns == targetTurns) && (targetTurns > 0)) {
+        rgb_setLeds(RGB_GREEN);
+    }
+    else {
+        rgb_setLeds(0);
+    }
 }
 
 #define NOTE_PIN_HIGH() GPIO_SetValue(0, 1<<26);
@@ -317,134 +345,32 @@ static void init_adc(void)
 
 int main (void) {
 
-
-    int32_t xoff = 0;
-    int32_t yoff = 0;
-    int32_t zoff = 0;
-
-    int8_t x = 0;
-
-    int8_t y = 0;
-    int8_t z = 0;
-    uint8_t dir = 1;
-    uint8_t wait = 0;
-
-    uint8_t state    = 0;
+    uint8_t rotaryState = 0;
 
     uint32_t trim = 0;
 
-    uint8_t btn1 = 0;
 
-
-    init_i2c();
+    /* Checkpoint mode: only rotary + 7-seg + trimpot + RGB */
     init_ssp();
     init_adc();
 
     rotary_init();
     led7seg_init();
-
-    pca9532_init();
-    joystick_init();
-    acc_init();
-    oled_init();
     rgb_init();
 
+    led7seg_setChar('0', FALSE);
+    rgb_setLeds(0);
 
-    /*
-     * Assume base board in zero-g position when reading first value.
-     */
-    acc_read(&x, &y, &z);
-    xoff = 0-x;
-    yoff = 0-y;
-    zoff = 64-z;
-
-    /* ---- Speaker ------> */
-
-    GPIO_SetDir(2, 1<<0, 1);
-    GPIO_SetDir(2, 1<<1, 1);
-
-    GPIO_SetDir(0, 1<<27, 1);
-    GPIO_SetDir(0, 1<<28, 1);
-    GPIO_SetDir(2, 1<<13, 1);
-    GPIO_SetDir(0, 1<<26, 1);
-
-    GPIO_ClearValue(0, 1<<27); //LM4811-clk
-    GPIO_ClearValue(0, 1<<28); //LM4811-up/dn
-    GPIO_ClearValue(2, 1<<13); //LM4811-shutdn
-
-    btn1 = ((GPIO_ReadValue(0) >> 4) & 0x01);
-
-    /* <---- Speaker ------ */
-
-    moveBar(1, dir);
-    oled_clearScreen(OLED_COLOR_BLACK);
     while (1) {
 
-        /* ####### Accelerometer and LEDs  ###### */
-        /* # */
+        rotaryState = rotary_read();
 
-        acc_read(&x, &y, &z);
-        x = x+xoff;
-        y = y+yoff;
-        z = z+zoff;
+        ADC_StartCmd(LPC_ADC,ADC_START_NOW);
+        //Wait conversion complete
+        while (!(ADC_ChannelGetStatus(LPC_ADC,ADC_CHANNEL_0,ADC_DATA_DONE)));
+        trim = ADC_ChannelGetData(LPC_ADC,ADC_CHANNEL_0);
 
-        if (y < 0) {
-            dir = 1;
-            y = -y;
-        }
-        else {
-            dir = -1;
-        }
-
-        if (y > 1 && wait++ > (40 / (1 + (y/10)))) {
-            moveBar(1, dir);
-            wait = 0;
-        }
-
-        /* # */
-        /* ############################################ */
-
-
-        /* ####### Rotary and 7-segment display  ###### */
-        /* # */
-
-        change7Seg(rotary_read());
-
-        /* # */
-        /* ############################################# */
-
-
-        /* ####### Joystick and OLED  ###### */
-        /* # */
-
-        state = joystick_read();
-        if (state != 0)
-            drawOled(state);
-
-        /* # */
-        /* ############################################# */
-
-        btn1 = ((GPIO_ReadValue(0) >> 4) & 0x01);
-
-        /* ############ Trimpot and RGB LED  ########### */
-        /* # */
-
-
-		ADC_StartCmd(LPC_ADC,ADC_START_NOW);
-		//Wait conversion complete
-		while (!(ADC_ChannelGetStatus(LPC_ADC,ADC_CHANNEL_0,ADC_DATA_DONE)));
-		trim = ADC_ChannelGetData(LPC_ADC,ADC_CHANNEL_0);
-
-        changeRgbLeds(trim);
-
-
-        /* # */
-        /* ############################################# */
-
-
-
-        if (btn1 == 0)
-            playSong(song);
+        updateCheckpointDisplayAndLed(trim, rotaryState);
 
         Timer0_Wait(1);
     }
