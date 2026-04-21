@@ -21,8 +21,6 @@
 #define CHECKPOINT_ADC_PIN     31
 #define CHECKPOINT_ADC_FUNC    3
 
-static uint8_t targetTurns = 0;
-
 static uint32_t readAdcAverage(uint8_t channel);
 
 static uint8_t trimToTurns(uint32_t trim)
@@ -40,21 +38,13 @@ static void updateCheckpointDisplayAndLed(uint32_t trim)
 {
     uint8_t newTarget = trimToTurns(trim);
 
+    /* Potentiometer directly drives the 7-segment digit. */
+    led7seg_setChar((uint8_t)('0' + newTarget), FALSE);
+
     /* Default state for each cycle is LED off. */
     rgb_setLeds(0);
 
-    if (newTarget == 0) {
-        targetTurns = 0;
-        led7seg_setChar((uint8_t)('0'), FALSE);
-        return;
-    }
-
-    if (newTarget != targetTurns) {
-        targetTurns = newTarget;
-        led7seg_setChar((uint8_t)('0' + targetTurns), FALSE);
-    }
-
-    if (targetTurns > 0) {
+    if (newTarget > 0) {
         rgb_setLeds(RGB_GREEN);
     }
 }
