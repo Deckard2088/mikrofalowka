@@ -87,17 +87,7 @@ static uint8_t currentTurns = 0;
 
 static uint8_t trimToTurns(uint32_t trim)
 {
-    uint32_t turns = 0;
-
-    /*
-     * Add a dead zone near zero to avoid false non-zero targets caused by ADC noise
-     * or trimpot not reaching an electrical zero.
-     */
-    if (trim < 512) {
-        return 0;
-    }
-
-    turns = (trim * 10) / 4096;
+    uint32_t turns = (trim * 10) / 4096;
 
     if (turns > 9) {
         turns = 9;
@@ -154,6 +144,29 @@ static uint32_t readTrimFiltered(void)
     }
 
     return (sum / 8);
+}
+
+static uint8_t readRotaryEventNonBlocking(void)
+{
+    static uint8_t prevState = 0x03;
+    uint8_t currState = (uint8_t)((GPIO_ReadValue(0) >> 24) & 0x03);
+    uint8_t event = ROTARY_WAIT;
+
+    /*
+     * Non-blocking edge detection to avoid stalling the main loop.
+     * On this board: 3->2 typically means right, 3->1 left.
+     */
+    if (prevState == 0x03) {
+        if (currState == 0x02) {
+            event = ROTARY_RIGHT;
+        }
+        else if (currState == 0x01) {
+            event = ROTARY_LEFT;
+        }
+    }
+
+    prevState = currState;
+    return event;
 }
 
 #define NOTE_PIN_HIGH() GPIO_SetValue(0, 1<<26);
@@ -377,7 +390,7 @@ int main (void) {
 
     while (1) {
 
-        rotaryState = rotary_read();
+        rotaryState = readRotaryEventNonBlocking();
 
         trim = readTrimFiltered();
 
