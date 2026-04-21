@@ -247,6 +247,15 @@ static uint32_t read_trim_adc(void)
     return ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
 }
 
+static uint8_t trimTo7segChar(uint32_t trim)
+{
+    uint32_t digit = (trim * 10U) / 4096U;
+    if (digit > 9U) {
+        digit = 9U;
+    }
+    return (uint8_t)('0' + digit);
+}
+
 static void oled_printValue(uint8_t rowY, int value)
 {
     intToString(value, oledBuf, sizeof(oledBuf), 10);
@@ -314,9 +323,9 @@ static void service_oledSubsystem(void)
 
 int main (void) {
 
-    uint8_t rotaryState = 0;
     uint32_t elapsedMs = 0;
     uint8_t lastCh7seg = '0';
+    uint8_t trimChar = '0';
 
     init_ssp();
 
@@ -334,8 +343,10 @@ int main (void) {
     refreshOutputs();
 
     while (1) {
-        rotaryState = rotary_read();
-        if (change7Seg(rotaryState)) {
+        trimChar = trimTo7segChar(read_trim_adc());
+        if (trimChar != ch7seg) {
+            ch7seg = trimChar;
+            refreshOutputs();
             elapsedMs = 0;
         }
 
