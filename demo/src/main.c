@@ -16,10 +16,15 @@
 #include "led7seg.h"
 #include "rgb.h"
 
-#define CHECKPOINT_ADC_CHANNEL ADC_CHANNEL_5
-#define CHECKPOINT_ADC_PORT    1
-#define CHECKPOINT_ADC_PIN     31
-#define CHECKPOINT_ADC_FUNC    3
+#define CHECKPOINT_ADC_A_CHANNEL ADC_CHANNEL_0
+#define CHECKPOINT_ADC_A_PORT    0
+#define CHECKPOINT_ADC_A_PIN     23
+#define CHECKPOINT_ADC_A_FUNC    1
+
+#define CHECKPOINT_ADC_B_CHANNEL ADC_CHANNEL_5
+#define CHECKPOINT_ADC_B_PORT    1
+#define CHECKPOINT_ADC_B_PIN     31
+#define CHECKPOINT_ADC_B_FUNC    3
 
 static uint32_t readAdcAverage(uint8_t channel);
 
@@ -51,7 +56,33 @@ static void updateCheckpointDisplayAndLed(uint32_t trim)
 
 static uint32_t readTrimFiltered(void)
 {
-    return readAdcAverage(CHECKPOINT_ADC_CHANNEL);
+    static uint8_t initialized = 0;
+    static uint8_t useB = 1;
+    static uint32_t lastA = 0;
+    static uint32_t lastB = 0;
+    uint32_t trimA = readAdcAverage(CHECKPOINT_ADC_A_CHANNEL);
+    uint32_t trimB = readAdcAverage(CHECKPOINT_ADC_B_CHANNEL);
+    uint32_t deltaA = (trimA > lastA) ? (trimA - lastA) : (lastA - trimA);
+    uint32_t deltaB = (trimB > lastB) ? (trimB - lastB) : (lastB - trimB);
+
+    if (!initialized) {
+        initialized = 1;
+        lastA = trimA;
+        lastB = trimB;
+        return trimB;
+    }
+
+    if (deltaA > (deltaB + 20)) {
+        useB = 0;
+    }
+    else if (deltaB > (deltaA + 20)) {
+        useB = 1;
+    }
+
+    lastA = trimA;
+    lastB = trimB;
+
+    return useB ? trimB : trimA;
 }
 
 static void init_ssp(void)
@@ -98,22 +129,29 @@ static void init_adc(void)
 
     /*
      * Init ADC pin connect
-     * AD0.5 on P1.31 (second potentiometer)
+     * AD0.0 on P0.23 and AD0.5 on P1.31
      */
-    PinCfg.Funcnum = CHECKPOINT_ADC_FUNC;
+    PinCfg.Funcnum = CHECKPOINT_ADC_A_FUNC;
 	PinCfg.OpenDrain = 0;
 	PinCfg.Pinmode = 0;
-    PinCfg.Pinnum = CHECKPOINT_ADC_PIN;
-    PinCfg.Portnum = CHECKPOINT_ADC_PORT;
+    PinCfg.Pinnum = CHECKPOINT_ADC_A_PIN;
+    PinCfg.Portnum = CHECKPOINT_ADC_A_PORT;
+    PINSEL_ConfigPin(&PinCfg);
+
+    PinCfg.Funcnum = CHECKPOINT_ADC_B_FUNC;
+    PinCfg.Pinnum = CHECKPOINT_ADC_B_PIN;
+    PinCfg.Portnum = CHECKPOINT_ADC_B_PORT;
 	PINSEL_ConfigPin(&PinCfg);
 
 	/* Configuration for ADC :
 	 * 	Frequency at 0.2Mhz
-     *  ADC selected channel, no Interrupt
+     *  ADC channels 0 and 5, no Interrupt
 	 */
 	ADC_Init(LPC_ADC, 200000);
-    ADC_IntConfig(LPC_ADC,CHECKPOINT_ADC_CHANNEL,DISABLE);
-    ADC_ChannelCmd(LPC_ADC,CHECKPOINT_ADC_CHANNEL,ENABLE);
+    ADC_IntConfig(LPC_ADC,CHECKPOINT_ADC_A_CHANNEL,DISABLE);
+    ADC_IntConfig(LPC_ADC,CHECKPOINT_ADC_B_CHANNEL,DISABLE);
+    ADC_ChannelCmd(LPC_ADC,CHECKPOINT_ADC_A_CHANNEL,ENABLE);
+    ADC_ChannelCmd(LPC_ADC,CHECKPOINT_ADC_B_CHANNEL,ENABLE);
 
 }
 
