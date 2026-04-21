@@ -58,29 +58,29 @@ static uint32_t readTrimFiltered(void)
 {
     static uint8_t initialized = 0;
     static uint8_t useB = 1;
-    static uint32_t lastA = 0;
-    static uint32_t lastB = 0;
+    static uint32_t baseA = 0;
+    static uint32_t baseB = 0;
     uint32_t trimA = readAdcAverage(CHECKPOINT_ADC_A_CHANNEL);
     uint32_t trimB = readAdcAverage(CHECKPOINT_ADC_B_CHANNEL);
-    uint32_t deltaA = (trimA > lastA) ? (trimA - lastA) : (lastA - trimA);
-    uint32_t deltaB = (trimB > lastB) ? (trimB - lastB) : (lastB - trimB);
+    uint32_t devA = 0;
+    uint32_t devB = 0;
 
     if (!initialized) {
         initialized = 1;
-        lastA = trimA;
-        lastB = trimB;
+        baseA = trimA;
+        baseB = trimB;
         return trimB;
     }
 
-    if (deltaA > (deltaB + 20)) {
+    devA = (trimA > baseA) ? (trimA - baseA) : (baseA - trimA);
+    devB = (trimB > baseB) ? (trimB - baseB) : (baseB - trimB);
+
+    if (devA > (devB + 8)) {
         useB = 0;
     }
-    else if (deltaB > (deltaA + 20)) {
+    else if (devB > (devA + 8)) {
         useB = 1;
     }
-
-    lastA = trimA;
-    lastB = trimB;
 
     return useB ? trimB : trimA;
 }
