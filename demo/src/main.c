@@ -90,6 +90,8 @@ static void drawOled(uint8_t joyState)
 static uint8_t targetTurns = 0;
 static uint8_t currentTurns = 0;
 
+static uint32_t readAdcAverage(uint8_t channel);
+
 static uint8_t trimToTurns(uint32_t trim)
 {
     uint32_t turns = (trim * 10) / 4096;
