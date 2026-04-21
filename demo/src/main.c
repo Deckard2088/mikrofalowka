@@ -9,18 +9,73 @@
 
 #include "lpc17xx_pinsel.h"
 #include "lpc17xx_gpio.h"
+#include "lpc17xx_i2c.h"
 #include "lpc17xx_ssp.h"
+#include "lpc17xx_adc.h"
 #include "lpc17xx_timer.h"
 
 #include "rotary.h"
 #include "led7seg.h"
 #include "rgb.h"
+#include "light.h"
+#include "oled.h"
+#include "temp.h"
+#include "acc.h"
 
 #define AUTO_DECAY_INTERVAL_MS 5000
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
 #define BUZZER_PIN_LOW()  GPIO_ClearValue(0, 1<<26)
 
 static uint8_t ch7seg = '0';
+static uint32_t msTicks = 0;
+static uint8_t buf[12];
+
+static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
+{
+    static const char* pAscii = "0123456789abcdefghijklmnopqrstuvwxyz";
+    int pos = 0;
+    int tmpValue = value;
+
+    if (pBuf == NULL || len < 2) {
+        return;
+    }
+
+    if (base < 2 || base > 36) {
+        return;
+    }
+
+    if (value < 0) {
+        tmpValue = -tmpValue;
+        value = -value;
+        pBuf[pos++] = '-';
+    }
+
+    do {
+        pos++;
+        tmpValue /= (int)base;
+    } while (tmpValue > 0);
+
+    if ((uint32_t)pos > len) {
+        return;
+    }
+
+    pBuf[pos] = '\0';
+
+    do {
+        pBuf[--pos] = (uint8_t)pAscii[value % (int)base];
+        value /= (int)base;
+    } while (value > 0);
+}
+
+void SysTick_Handler(void)
+{
+    msTicks++;
+}
+
+static uint32_t getTicks(void)
+{
+    return msTicks;
+}
 
 static uint8_t rotate7SegChar(uint8_t ch)
 {
@@ -115,11 +170,11 @@ static void buzzerPlayTone(uint32_t periodUs, uint32_t durationMs)
 static void buzzerZeroPulse(void)
 {
     /* Short annoying triple beep when zero is reached. */
-    buzzerPlayTone(700, 25);
+    buzzerPlayTone(700, 75);
     Timer0_Wait(25);
-    buzzerPlayTone(430, 25);
+    buzzerPlayTone(430, 75);
     Timer0_Wait(25);
-    buzzerPlayTone(900, 25);
+    buzzerPlayTone(900, 75);
 }
 
 static void init_ssp(void)
@@ -147,19 +202,119 @@ static void init_ssp(void)
     SSP_Cmd(LPC_SSP1, ENABLE);
 }
 
+static void init_i2c(void)
+{
+    PINSEL_CFG_Type PinCfg;
+
+    PinCfg.Funcnum = 2;
+    PinCfg.Pinnum = 10;
+    PinCfg.Portnum = 0;
+    PINSEL_ConfigPin(&PinCfg);
+    PinCfg.Pinnum = 11;
+    PINSEL_ConfigPin(&PinCfg);
+
+    I2C_Init(LPC_I2C2, 100000);
+    I2C_Cmd(LPC_I2C2, ENABLE);
+}
+
+static void init_adc(void)
+{
+    PINSEL_CFG_Type PinCfg;
+
+    PinCfg.Funcnum = 1;
+    PinCfg.OpenDrain = 0;
+    PinCfg.Pinmode = 0;
+    PinCfg.Pinnum = 23;
+    PinCfg.Portnum = 0;
+    PINSEL_ConfigPin(&PinCfg);
+
+    ADC_Init(LPC_ADC, 200000);
+    ADC_IntConfig(LPC_ADC, ADC_CHANNEL_0, DISABLE);
+    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
+}
+
+static void init_oledSensorView(void)
+{
+    oled_clearScreen(OLED_COLOR_WHITE);
+    oled_putString(1,1,  (uint8_t*)"Temp   : ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(1,9,  (uint8_t*)"Light  : ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(1,17, (uint8_t*)"Trimpot: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(1,25, (uint8_t*)"Acc x  : ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(1,33, (uint8_t*)"Acc y  : ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(1,41, (uint8_t*)"Acc z  : ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+}
+
+static void update_oledSensorView(int32_t t, uint32_t lux, uint32_t trim, int8_t x, int8_t y, int8_t z)
+{
+    intToString(t, buf, 10, 10);
+    oled_fillRect((1+9*6),1, 80, 8, OLED_COLOR_WHITE);
+    oled_putString((1+9*6),1, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+    intToString((int)lux, buf, 10, 10);
+    oled_fillRect((1+9*6),9, 80, 16, OLED_COLOR_WHITE);
+    oled_putString((1+9*6),9, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+    intToString((int)trim, buf, 10, 10);
+    oled_fillRect((1+9*6),17, 80, 24, OLED_COLOR_WHITE);
+    oled_putString((1+9*6),17, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+    intToString((int)x, buf, 10, 10);
+    oled_fillRect((1+9*6),25, 80, 32, OLED_COLOR_WHITE);
+    oled_putString((1+9*6),25, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+    intToString((int)y, buf, 10, 10);
+    oled_fillRect((1+9*6),33, 80, 40, OLED_COLOR_WHITE);
+    oled_putString((1+9*6),33, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+    intToString((int)z, buf, 10, 10);
+    oled_fillRect((1+9*6),41, 80, 48, OLED_COLOR_WHITE);
+    oled_putString((1+9*6),41, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+}
+
 
 int main (void) {
 
     uint8_t rotaryState = 0;
     uint32_t elapsedMs = 0;
+    uint32_t oledRefreshMs = 0;
     uint8_t lastCh7seg = '0';
+    int32_t xoff = 0;
+    int32_t yoff = 0;
+    int32_t zoff = 0;
+    int8_t x = 0;
+    int8_t y = 0;
+    int8_t z = 0;
+    int32_t t = 0;
+    uint32_t lux = 0;
+    uint32_t trim = 0;
 
+    init_i2c();
     init_ssp();
+    init_adc();
 
     rotary_init();
     led7seg_init();
     rgb_init();
     init_buzzer();
+
+    oled_init();
+    light_init();
+    acc_init();
+    temp_init(&getTicks);
+
+    if (SysTick_Config(SystemCoreClock / 1000)) {
+        while (1) {
+        }
+    }
+
+    acc_read(&x, &y, &z);
+    xoff = 0 - x;
+    yoff = 0 - y;
+    zoff = 64 - z;
+
+    light_enable();
+    light_setRange(LIGHT_RANGE_4000);
+    init_oledSensorView();
 
     refreshOutputs();
 
@@ -183,6 +338,24 @@ int main (void) {
             /* Zero reached: short beep only once. */
             buzzerZeroPulse();
             refreshOutputs();
+        }
+
+        if (++oledRefreshMs >= 200) {
+            oledRefreshMs = 0;
+
+            acc_read(&x, &y, &z);
+            x = (int8_t)(x + xoff);
+            y = (int8_t)(y + yoff);
+            z = (int8_t)(z + zoff);
+
+            t = temp_read();
+            lux = light_read();
+
+            ADC_StartCmd(LPC_ADC, ADC_START_NOW);
+            while (!(ADC_ChannelGetStatus(LPC_ADC, ADC_CHANNEL_0, ADC_DATA_DONE)));
+            trim = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
+
+            update_oledSensorView(t, lux, trim, x, y, z);
         }
 
         lastCh7seg = ch7seg;
