@@ -22,10 +22,10 @@
 #include "oled.h"
 #include "rgb.h"
 
-#define CHECKPOINT_ADC_CHANNEL ADC_CHANNEL_5
-#define CHECKPOINT_ADC_PORT    1
-#define CHECKPOINT_ADC_PIN     31
-#define CHECKPOINT_ADC_FUNC    3
+#define CHECKPOINT_ADC_CHANNEL ADC_CHANNEL_0
+#define CHECKPOINT_ADC_PORT    0
+#define CHECKPOINT_ADC_PIN     23
+#define CHECKPOINT_ADC_FUNC    1
 
 static uint8_t barPos = 2;
 
@@ -359,7 +359,7 @@ static void init_adc(void)
 
 	/*
 	 * Init ADC pin connect
-     * AD0.5 on P1.31 (7-segment checkpoint input)
+     * AD0.0 on P0.23 (second potentiometer for checkpoint)
 	 */
     PinCfg.Funcnum = CHECKPOINT_ADC_FUNC;
 	PinCfg.OpenDrain = 0;
