@@ -13,17 +13,15 @@
 #include "lpc17xx_adc.h"
 #include "lpc17xx_timer.h"
 
-#include "rotary.h"
 #include "led7seg.h"
 #include "rgb.h"
 
-#define CHECKPOINT_ADC_CHANNEL ADC_CHANNEL_5
-#define CHECKPOINT_ADC_PORT    1
-#define CHECKPOINT_ADC_PIN     31
-#define CHECKPOINT_ADC_FUNC    3
+#define CHECKPOINT_ADC_CHANNEL ADC_CHANNEL_0
+#define CHECKPOINT_ADC_PORT    0
+#define CHECKPOINT_ADC_PIN     23
+#define CHECKPOINT_ADC_FUNC    1
 
 static uint8_t targetTurns = 0;
-static uint8_t currentTurns = 0;
 
 static uint32_t readAdcAverage(uint8_t channel);
 
@@ -38,7 +36,7 @@ static uint8_t trimToTurns(uint32_t trim)
     return (uint8_t)turns;
 }
 
-static void updateCheckpointDisplayAndLed(uint32_t trim, uint8_t rotaryDir)
+static void updateCheckpointDisplayAndLed(uint32_t trim)
 {
     uint8_t newTarget = trimToTurns(trim);
 
@@ -47,7 +45,6 @@ static void updateCheckpointDisplayAndLed(uint32_t trim, uint8_t rotaryDir)
 
     if (newTarget == 0) {
         targetTurns = 0;
-        currentTurns = 0;
         led7seg_setChar((uint8_t)('0'), FALSE);
         return;
     }
@@ -57,18 +54,7 @@ static void updateCheckpointDisplayAndLed(uint32_t trim, uint8_t rotaryDir)
         led7seg_setChar((uint8_t)('0' + targetTurns), FALSE);
     }
 
-    if (rotaryDir == ROTARY_RIGHT) {
-        if (currentTurns < 99) {
-            currentTurns++;
-        }
-    }
-    else if (rotaryDir == ROTARY_LEFT) {
-        if (currentTurns > 0) {
-            currentTurns--;
-        }
-    }
-
-    if ((currentTurns == targetTurns) && (targetTurns > 0)) {
+    if (targetTurns > 0) {
         rgb_setLeds(RGB_GREEN);
     }
 }
@@ -76,29 +62,6 @@ static void updateCheckpointDisplayAndLed(uint32_t trim, uint8_t rotaryDir)
 static uint32_t readTrimFiltered(void)
 {
     return readAdcAverage(CHECKPOINT_ADC_CHANNEL);
-}
-
-static uint8_t readRotaryEventNonBlocking(void)
-{
-    static uint8_t prevState = 0x03;
-    uint8_t currState = (uint8_t)((GPIO_ReadValue(0) >> 24) & 0x03);
-    uint8_t event = ROTARY_WAIT;
-
-    /*
-     * Non-blocking edge detection to avoid stalling the main loop.
-     * On this board: 3->2 typically means right, 3->1 left.
-     */
-    if (prevState == 0x03) {
-        if (currState == 0x02) {
-            event = ROTARY_RIGHT;
-        }
-        else if (currState == 0x01) {
-            event = ROTARY_LEFT;
-        }
-    }
-
-    prevState = currState;
-    return event;
 }
 
 static void init_ssp(void)
@@ -145,7 +108,7 @@ static void init_adc(void)
 
     /*
      * Init ADC pin connect
-     * AD0.5 on P1.31 (second potentiometer for checkpoint)
+     * AD0.0 on P0.23 (potentiometer from the OLED example)
      */
     PinCfg.Funcnum = CHECKPOINT_ADC_FUNC;
 	PinCfg.OpenDrain = 0;
@@ -167,14 +130,11 @@ static void init_adc(void)
 
 int main (void) {
 
-    uint8_t rotaryState = 0;
-
     uint32_t trim = 0;
 
     init_ssp();
     init_adc();
 
-    rotary_init();
     led7seg_init();
     rgb_init();
 
@@ -182,12 +142,9 @@ int main (void) {
     rgb_setLeds(0);
 
     while (1) {
-
-        rotaryState = readRotaryEventNonBlocking();
-
         trim = readTrimFiltered();
 
-        updateCheckpointDisplayAndLed(trim, rotaryState);
+        updateCheckpointDisplayAndLed(trim);
 
         Timer0_Wait(1);
     }
