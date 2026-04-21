@@ -16,10 +16,10 @@
 #include "led7seg.h"
 #include "rgb.h"
 
-#define CHECKPOINT_ADC_CHANNEL ADC_CHANNEL_0
-#define CHECKPOINT_ADC_PORT    0
-#define CHECKPOINT_ADC_PIN     23
-#define CHECKPOINT_ADC_FUNC    1
+#define CHECKPOINT_ADC_CHANNEL ADC_CHANNEL_5
+#define CHECKPOINT_ADC_PORT    1
+#define CHECKPOINT_ADC_PIN     31
+#define CHECKPOINT_ADC_FUNC    3
 
 static uint8_t targetTurns = 0;
 
@@ -108,7 +108,7 @@ static void init_adc(void)
 
     /*
      * Init ADC pin connect
-     * AD0.0 on P0.23 (potentiometer from the OLED example)
+     * AD0.5 on P1.31 (second potentiometer)
      */
     PinCfg.Funcnum = CHECKPOINT_ADC_FUNC;
 	PinCfg.OpenDrain = 0;
