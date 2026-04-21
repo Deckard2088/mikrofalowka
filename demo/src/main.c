@@ -24,9 +24,9 @@ static uint8_t rotate7SegChar(uint8_t ch)
     case '0':
         return '0';
     case '1':
-        return '1';
+        return '|';
     case '2':
-        return 'S';
+        return '2';
     case '3':
         return 'E';
     case '4':
