@@ -16,6 +16,8 @@
 #include "led7seg.h"
 #include "rgb.h"
 
+#define AUTO_DECAY_INTERVAL_MS 5000
+
 static uint8_t ch7seg = '0';
 
 static uint8_t rotate7SegChar(uint8_t ch)
@@ -46,7 +48,17 @@ static uint8_t rotate7SegChar(uint8_t ch)
     }
 }
 
-static void change7Seg(uint8_t rotaryDir)
+static void refreshOutputs(void)
+{
+    led7seg_setChar(rotate7SegChar(ch7seg), FALSE);
+
+    if (ch7seg == '0')
+        rgb_setLeds(0);
+    else
+        rgb_setLeds(RGB_GREEN);
+}
+
+static uint8_t change7Seg(uint8_t rotaryDir)
 {
     if (rotaryDir != ROTARY_WAIT) {
 
@@ -62,8 +74,11 @@ static void change7Seg(uint8_t rotaryDir)
         else if (ch7seg < '0')
             ch7seg = '9';
 
-        led7seg_setChar(rotate7SegChar(ch7seg), FALSE);
+        refreshOutputs();
+        return 1;
     }
+
+    return 0;
 }
 
 static void init_ssp(void)
@@ -95,6 +110,7 @@ static void init_ssp(void)
 int main (void) {
 
     uint8_t rotaryState = 0;
+    uint32_t elapsedMs = 0;
 
     init_ssp();
 
@@ -102,18 +118,23 @@ int main (void) {
     led7seg_init();
     rgb_init();
 
-    led7seg_setChar('0', FALSE);
-    rgb_setLeds(0);
+    refreshOutputs();
 
     while (1) {
 //dziala
         rotaryState = rotary_read();
-        change7Seg(rotaryState);
+        if (change7Seg(rotaryState)) {
+            elapsedMs = 0;
+        }
 
-        if (ch7seg == '0')
-            rgb_setLeds(0);
-        else
-            rgb_setLeds(RGB_GREEN);
+        if (++elapsedMs >= AUTO_DECAY_INTERVAL_MS) {
+            elapsedMs = 0;
+
+            if (ch7seg > '0') {
+                ch7seg--;
+                refreshOutputs();
+            }
+        }
 
         Timer0_Wait(1);
     }
