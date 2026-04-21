@@ -23,6 +23,7 @@
 #include "acc.h"
 
 #define AUTO_DECAY_INTERVAL_MS 5000
+#define OLED_REFRESH_INTERVAL_MS 200
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
 #define BUZZER_PIN_LOW()  GPIO_ClearValue(0, 1<<26)
 
@@ -271,12 +272,42 @@ static void update_oledSensorView(int32_t t, uint32_t lux, uint32_t trim, int8_t
     oled_putString((1+9*6),41, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 }
 
+static void service_oledSensors(int32_t xoff, int32_t yoff, int32_t zoff)
+{
+    static uint32_t lastOledTick = 0;
+    uint32_t now = getTicks();
+    int8_t x = 0;
+    int8_t y = 0;
+    int8_t z = 0;
+    int32_t t = 0;
+    uint32_t lux = 0;
+    uint32_t trim = 0;
+
+    if ((now - lastOledTick) < OLED_REFRESH_INTERVAL_MS) {
+        return;
+    }
+    lastOledTick = now;
+
+    acc_read(&x, &y, &z);
+    x = (int8_t)(x + xoff);
+    y = (int8_t)(y + yoff);
+    z = (int8_t)(z + zoff);
+
+    t = temp_read();
+    lux = light_read();
+
+    ADC_StartCmd(LPC_ADC, ADC_START_NOW);
+    while (!(ADC_ChannelGetStatus(LPC_ADC, ADC_CHANNEL_0, ADC_DATA_DONE)));
+    trim = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
+
+    update_oledSensorView(t, lux, trim, x, y, z);
+}
+
 
 int main (void) {
 
     uint8_t rotaryState = 0;
     uint32_t elapsedMs = 0;
-    uint32_t oledRefreshMs = 0;
     uint8_t lastCh7seg = '0';
     int32_t xoff = 0;
     int32_t yoff = 0;
@@ -284,9 +315,6 @@ int main (void) {
     int8_t x = 0;
     int8_t y = 0;
     int8_t z = 0;
-    int32_t t = 0;
-    uint32_t lux = 0;
-    uint32_t trim = 0;
 
     init_i2c();
     init_ssp();
@@ -340,23 +368,8 @@ int main (void) {
             refreshOutputs();
         }
 
-        if (++oledRefreshMs >= 200) {
-            oledRefreshMs = 0;
-
-            acc_read(&x, &y, &z);
-            x = (int8_t)(x + xoff);
-            y = (int8_t)(y + yoff);
-            z = (int8_t)(z + zoff);
-
-            t = temp_read();
-            lux = light_read();
-
-            ADC_StartCmd(LPC_ADC, ADC_START_NOW);
-            while (!(ADC_ChannelGetStatus(LPC_ADC, ADC_CHANNEL_0, ADC_DATA_DONE)));
-            trim = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
-
-            update_oledSensorView(t, lux, trim, x, y, z);
-        }
+        /* OLED refresh is serviced independently from rotary/7-seg logic. */
+        service_oledSensors(xoff, yoff, zoff);
 
         lastCh7seg = ch7seg;
 
