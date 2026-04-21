@@ -22,6 +22,11 @@
 #include "oled.h"
 #include "rgb.h"
 
+#define CHECKPOINT_ADC_CHANNEL ADC_CHANNEL_5
+#define CHECKPOINT_ADC_PORT    1
+#define CHECKPOINT_ADC_PIN     31
+#define CHECKPOINT_ADC_FUNC    3
+
 static uint8_t barPos = 2;
 
 static void moveBar(uint8_t steps, uint8_t dir)
@@ -139,8 +144,8 @@ static uint32_t readTrimFiltered(void)
     /* Average a few ADC samples to reduce trimpot noise and threshold jitter. */
     for (i = 0; i < 8; i++) {
         ADC_StartCmd(LPC_ADC,ADC_START_NOW);
-        while (!(ADC_ChannelGetStatus(LPC_ADC,ADC_CHANNEL_0,ADC_DATA_DONE)));
-        sum += ADC_ChannelGetData(LPC_ADC,ADC_CHANNEL_0);
+        while (!(ADC_ChannelGetStatus(LPC_ADC,CHECKPOINT_ADC_CHANNEL,ADC_DATA_DONE)));
+        sum += ADC_ChannelGetData(LPC_ADC,CHECKPOINT_ADC_CHANNEL);
     }
 
     return (sum / 8);
@@ -350,22 +355,22 @@ static void init_adc(void)
 
 	/*
 	 * Init ADC pin connect
-	 * AD0.0 on P0.23
+     * AD0.5 on P1.31 (second potentiometer)
 	 */
-	PinCfg.Funcnum = 1;
+    PinCfg.Funcnum = CHECKPOINT_ADC_FUNC;
 	PinCfg.OpenDrain = 0;
 	PinCfg.Pinmode = 0;
-	PinCfg.Pinnum = 23;
-	PinCfg.Portnum = 0;
+    PinCfg.Pinnum = CHECKPOINT_ADC_PIN;
+    PinCfg.Portnum = CHECKPOINT_ADC_PORT;
 	PINSEL_ConfigPin(&PinCfg);
 
 	/* Configuration for ADC :
 	 * 	Frequency at 0.2Mhz
-	 *  ADC channel 0, no Interrupt
+     *  ADC selected channel, no Interrupt
 	 */
 	ADC_Init(LPC_ADC, 200000);
-	ADC_IntConfig(LPC_ADC,ADC_CHANNEL_0,DISABLE);
-	ADC_ChannelCmd(LPC_ADC,ADC_CHANNEL_0,ENABLE);
+    ADC_IntConfig(LPC_ADC,CHECKPOINT_ADC_CHANNEL,DISABLE);
+    ADC_ChannelCmd(LPC_ADC,CHECKPOINT_ADC_CHANNEL,ENABLE);
 
 }
 
