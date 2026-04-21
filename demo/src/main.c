@@ -110,11 +110,13 @@ static void updateCheckpointDisplayAndLed(uint32_t trim, uint8_t rotaryDir)
 {
     uint8_t newTarget = trimToTurns(trim);
 
+    /* Default state for each cycle is LED off. */
+    rgb_setLeds(0);
+
     if (newTarget == 0) {
         targetTurns = 0;
         currentTurns = 0;
         led7seg_setChar((uint8_t)('0'), FALSE);
-        rgb_setLeds(0);
         return;
     }
 
@@ -137,9 +139,21 @@ static void updateCheckpointDisplayAndLed(uint32_t trim, uint8_t rotaryDir)
     if ((currentTurns == targetTurns) && (targetTurns > 0)) {
         rgb_setLeds(RGB_GREEN);
     }
-    else {
-        rgb_setLeds(0);
+}
+
+static uint32_t readTrimFiltered(void)
+{
+    uint32_t sum = 0;
+    uint32_t i = 0;
+
+    /* Average a few ADC samples to reduce trimpot noise and threshold jitter. */
+    for (i = 0; i < 8; i++) {
+        ADC_StartCmd(LPC_ADC,ADC_START_NOW);
+        while (!(ADC_ChannelGetStatus(LPC_ADC,ADC_CHANNEL_0,ADC_DATA_DONE)));
+        sum += ADC_ChannelGetData(LPC_ADC,ADC_CHANNEL_0);
     }
+
+    return (sum / 8);
 }
 
 #define NOTE_PIN_HIGH() GPIO_SetValue(0, 1<<26);
@@ -365,10 +379,7 @@ int main (void) {
 
         rotaryState = rotary_read();
 
-        ADC_StartCmd(LPC_ADC,ADC_START_NOW);
-        //Wait conversion complete
-        while (!(ADC_ChannelGetStatus(LPC_ADC,ADC_CHANNEL_0,ADC_DATA_DONE)));
-        trim = ADC_ChannelGetData(LPC_ADC,ADC_CHANNEL_0);
+        trim = readTrimFiltered();
 
         updateCheckpointDisplayAndLed(trim, rotaryState);
 
