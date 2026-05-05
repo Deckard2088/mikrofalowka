@@ -20,6 +20,10 @@
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
 #define BUZZER_PIN_LOW()  GPIO_ClearValue(0, 1<<26)
 
+#define MOTOR_PORT  2
+#define MOTOR_IN1   (1U << 0)
+#define MOTOR_IN2   (1U << 1)
+
 static uint8_t ch7seg = '0';
 
 static uint8_t rotate7SegChar(uint8_t ch)
@@ -159,6 +163,28 @@ static void init_ssp(void)
     SSP_Cmd(LPC_SSP1, ENABLE);
 }
 
+static void init_motor(void)
+{
+    PINSEL_CFG_Type pinCfg;
+
+    pinCfg.Funcnum = 0;
+    pinCfg.OpenDrain = 0;
+    pinCfg.Pinmode = 0;
+    pinCfg.Portnum = MOTOR_PORT;
+
+    pinCfg.Pinnum = 0;
+    PINSEL_ConfigPin(&pinCfg);
+    pinCfg.Pinnum = 1;
+    PINSEL_ConfigPin(&pinCfg);
+
+    GPIO_SetDir(MOTOR_PORT, MOTOR_IN1 | MOTOR_IN2, 1);
+    GPIO_ClearValue(MOTOR_PORT, MOTOR_IN1 | MOTOR_IN2);
+
+    /* Simple forward drive: IN1 high, IN2 low. */
+    GPIO_SetValue(MOTOR_PORT, MOTOR_IN1);
+    GPIO_ClearValue(MOTOR_PORT, MOTOR_IN2);
+}
+
 
 int main (void) {
 
@@ -172,6 +198,7 @@ int main (void) {
     led7seg_init();
     rgb_init();
     init_buzzer();
+    init_motor();
 
     refreshOutputs();
 
@@ -201,7 +228,6 @@ int main (void) {
         Timer0_Wait(1);
     }
 }
-
 void check_failed(uint8_t *file, uint32_t line)
 {
 	/* User can add his own implementation to report the file name and line number,
