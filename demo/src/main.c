@@ -279,6 +279,7 @@ int main (void) {
 
     uint8_t rotaryState = 0;
     uint8_t lastRotaryState = ROTARY_WAIT;
+    uint8_t rotaryHandled = 0;
     uint32_t lastDecayTime = 0;
     uint32_t lastOledUpdate = 0;
     uint8_t lastCh7seg = '0';
@@ -318,21 +319,29 @@ int main (void) {
 
         rotaryState = rotary_read();
         
-        /* Change 7-segment only on state transition (from WAIT to direction) */
-        if (lastRotaryState == ROTARY_WAIT && rotaryState != ROTARY_WAIT) {
-            if (rotaryState == ROTARY_RIGHT) {
-                ch7seg++;
-            } else {
-                ch7seg--;
+        /* Process rotation: only increment/decrement once per direction */
+        if (rotaryState != ROTARY_WAIT) {
+            /* Encoder is moving */
+            if (!rotaryHandled) {
+                /* First time detecting movement - process it */
+                if (rotaryState == ROTARY_RIGHT) {
+                    ch7seg++;
+                } else {
+                    ch7seg--;
+                }
+
+                if (ch7seg > '9')
+                    ch7seg = '0';
+                else if (ch7seg < '0')
+                    ch7seg = '9';
+
+                refreshOutputs();
+                lastDecayTime = msTicks;
+                rotaryHandled = 1;  /* Mark as handled */
             }
-
-            if (ch7seg > '9')
-                ch7seg = '0';
-            else if (ch7seg < '0')
-                ch7seg = '9';
-
-            refreshOutputs();
-            lastDecayTime = msTicks;  /* Reset decay timer on change */
+        } else {
+            /* Encoder back to neutral - allow next movement to be detected */
+            rotaryHandled = 0;
         }
         lastRotaryState = rotaryState;
 
