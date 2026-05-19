@@ -278,6 +278,7 @@ static void init_adc(void)
 int main (void) {
 
     uint8_t rotaryState = 0;
+    uint8_t lastRotaryState = ROTARY_WAIT;
     uint32_t lastDecayTime = 0;
     uint32_t lastOledUpdate = 0;
     uint8_t lastCh7seg = '0';
@@ -316,9 +317,24 @@ int main (void) {
         ADC_StartCmd(LPC_ADC, ADC_START_NOW);
 
         rotaryState = rotary_read();
-        if (change7Seg(rotaryState)) {
+        
+        /* Change 7-segment only on state transition (from WAIT to direction) */
+        if (lastRotaryState == ROTARY_WAIT && rotaryState != ROTARY_WAIT) {
+            if (rotaryState == ROTARY_RIGHT) {
+                ch7seg++;
+            } else {
+                ch7seg--;
+            }
+
+            if (ch7seg > '9')
+                ch7seg = '0';
+            else if (ch7seg < '0')
+                ch7seg = '9';
+
+            refreshOutputs();
             lastDecayTime = msTicks;  /* Reset decay timer on change */
         }
+        lastRotaryState = rotaryState;
 
         /* Decay timer - decrease every 5 seconds */
         if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS) {
