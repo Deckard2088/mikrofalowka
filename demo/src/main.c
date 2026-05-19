@@ -297,25 +297,28 @@ int main (void) {
             /* Zero reached: short beep only once. */
             buzzerZeroPulse();
             refreshOutputs();
+            oled_clearScreen(OLED_COLOR_WHITE);
         }
 
         lastCh7seg = ch7seg;
 
-        /* Update OLED every 200ms */
-        if (elapsedMs % 200 == 0 && elapsedMs > 0) {
-            /* Read sensors */
-            temp = temp_read();
-            lux = light_read();
+        /* Display sensors on OLED only when ch7seg != '0' */
+        if (ch7seg != '0') {
+            if (elapsedMs % 200 == 0) {
+                /* Read sensors */
+                temp = temp_read();
+                lux = light_read();
 
-            /* Display on OLED */
-            oled_clearScreen(OLED_COLOR_WHITE);
-            oled_putString(1, 10, (uint8_t*)"Temp[C]: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            intToString(temp, buf, 10, 10);
-            oled_putString(60, 10, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                /* Display on OLED */
+                oled_clearScreen(OLED_COLOR_WHITE);
+                oled_putString(1, 10, (uint8_t*)"Temp[C]: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                intToString(temp, buf, 10, 10);
+                oled_putString(60, 10, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
-            oled_putString(1, 30, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            intToString(lux, buf, 10, 10);
-            oled_putString(60, 30, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                oled_putString(1, 30, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                intToString(lux, buf, 10, 10);
+                oled_putString(60, 30, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            }
         }
 
         Timer0_Wait(1);
