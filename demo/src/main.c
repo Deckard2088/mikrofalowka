@@ -12,7 +12,6 @@
 #include "lpc17xx_ssp.h"
 #include "lpc17xx_timer.h"
 #include "lpc17xx_i2c.h"
-#include "lpc17xx_adc.h"
 
 #include "rotary.h"
 #include "led7seg.h"
@@ -211,24 +210,6 @@ static void init_i2c(void)
     I2C_Cmd(LPC_I2C2, ENABLE);
 }
 
-static void init_adc(void)
-{
-    PINSEL_CFG_Type PinCfg;
-
-    /* Init ADC pin connect - AD0.0 on P0.23 */
-    PinCfg.Funcnum = 1;
-    PinCfg.OpenDrain = 0;
-    PinCfg.Pinmode = 0;
-    PinCfg.Pinnum = 23;
-    PinCfg.Portnum = 0;
-    PINSEL_ConfigPin(&PinCfg);
-
-    /* Configuration for ADC */
-    ADC_Init(LPC_ADC, 200000);
-    ADC_IntConfig(LPC_ADC, ADC_CHANNEL_0, DISABLE);
-    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
-}
-
 static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
 {
     static const char* pAscii = "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -264,66 +245,28 @@ static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
     } while(value > 0);
 }
 
-static void drawTempBar(int8_t temp)
-{
-    uint8_t barWidth;
-
-    /* Normalize temperature to bar width (0-70 pixels) */
-    barWidth = (temp * 70) / 50;
-    if (barWidth > 70) barWidth = 70;
-
-    /* Frame */
-    oled_rect(10, 10, 82, 18, OLED_COLOR_BLACK);
-    /* Filled bar */
-    oled_fillRect(10, 10, 10 + barWidth, 18, OLED_COLOR_BLACK);
-
-    /* Text with value */
-    intToString(temp, buf, 10, 10);
-    oled_putString(10, 20, (uint8_t*)"Temp: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-    oled_putString(50, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-}
-
-static void drawLightBar(uint32_t lux)
-{
-    uint8_t barWidth;
-
-    /* Normalize light to bar width (0-70 pixels) */
-    barWidth = (lux * 70) / 4000;
-    if (barWidth > 70) barWidth = 70;
-
-    /* Frame */
-    oled_rect(10, 40, 82, 48, OLED_COLOR_BLACK);
-    /* Filled bar */
-    oled_fillRect(10, 40, 10 + barWidth, 48, OLED_COLOR_BLACK);
-
-    /* Text with value */
-    intToString(lux, buf, 10, 10);
-    oled_putString(10, 50, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-    oled_putString(50, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-}
-
 static uint32_t getTicks(void)
 {
     return msTicks;
 }
-
 
 void SysTick_Handler(void)
 {
     msTicks++;
 }
 
+
 int main (void) {
 
     uint8_t rotaryState = 0;
     uint32_t elapsedMs = 0;
     uint8_t lastCh7seg = '0';
+    uint32_t oledUpdateMs = 0;
     int8_t temp = 0;
     uint32_t lux = 0;
 
     init_ssp();
     init_i2c();
-    init_adc();
 
     rotary_init();
     led7seg_init();
@@ -368,18 +311,27 @@ int main (void) {
 
         lastCh7seg = ch7seg;
 
-        /* Read sensors and display on OLED */
-        temp = temp_read();
-        lux = light_read();
+        /* Update OLED every 200ms */
+        oledUpdateMs++;
+        if (oledUpdateMs >= 200) {
+            oledUpdateMs = 0;
 
-        /* Clear display area */
-        oled_fillRect(10, 10, 85, 60, OLED_COLOR_WHITE);
+            /* Read sensors */
+            temp = temp_read();
+            lux = light_read();
 
-        /* Draw indicator bars */
-        drawTempBar(temp);
-        drawLightBar(lux);
+            /* Display on OLED */
+            oled_clearScreen(OLED_COLOR_WHITE);
+            oled_putString(1, 10, (uint8_t*)"Temp[C]: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            intToString(temp, buf, 10, 10);
+            oled_putString(60, 10, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
-        Timer0_Wait(200);
+            oled_putString(1, 30, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            intToString(lux, buf, 10, 10);
+            oled_putString(60, 30, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+        }
+
+        Timer0_Wait(1);
     }
 }
 void check_failed(uint8_t *file, uint32_t line)
