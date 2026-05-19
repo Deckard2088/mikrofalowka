@@ -275,12 +275,15 @@ static void init_adc(void)
 }
 
 
-int main (void) {
-
-    uint8_t rotaryState = 0;
+int main(void)
+{
+    uint8_t rotaryState = ROTARY_WAIT;
     uint32_t lastDecayTime = 0;
     uint32_t lastOledUpdate = 0;
+    uint32_t lastAdcTime = 0;
+
     uint8_t lastCh7seg = '0';
+
     int8_t temp = 0;
     uint32_t lux = 0;
     uint32_t trim = 0;
@@ -298,80 +301,147 @@ int main (void) {
     light_init();
     temp_init(&getTicks);
 
-    if (SysTick_Config(SystemCoreClock / 1000)) {
-        while (1);  /* Capture error */
+    if (SysTick_Config(SystemCoreClock / 1000))
+    {
+        while (1);
     }
 
     light_enable();
     light_setRange(LIGHT_RANGE_4000);
 
     oled_clearScreen(OLED_COLOR_WHITE);
+
     lastDecayTime = msTicks;
     lastOledUpdate = msTicks;
+    lastAdcTime = msTicks;
 
     refreshOutputs();
 
-    while (1) {
-        /* Always start ADC conversion (non-blocking) */
-        ADC_StartCmd(LPC_ADC, ADC_START_NOW);
+    /* Dodatkowe zmienne sterujące przed pętlą while(1) */
+        uint32_t lastTaskTime = 0;
+        uint8_t programStep = 0;
 
-        rotaryState = rotary_read();
-        if (change7Seg(rotaryState)) {
-            lastDecayTime = msTicks;
-        }
+        while (1)
+        {
+            /* =========================================================================
+             * KROK INTERWENCYJNY: ROTARY (Enkoder musi być czytany non-stop, bez czekania!)
+             * ========================================================================= */
+            rotaryState = rotary_read();
 
-        /* Decay timer - decrease every 5 seconds */
-        if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS) {
-            lastDecayTime = msTicks;
+            if (rotaryState == ROTARY_RIGHT)
+            {
+                if (ch7seg >= '9') ch7seg = '0';
+                else ch7seg++;
 
-            if (ch7seg > '0') {
-                ch7seg--;
                 refreshOutputs();
+                lastDecayTime = msTicks;
             }
-        }
+            else if (rotaryState == ROTARY_LEFT)
+            {
+                if (ch7seg <= '0') ch7seg = '9';
+                else ch7seg--;
 
-        if (ch7seg == '0' && lastCh7seg != '0') {
-            /* Zero reached: short beep only once. */
-            buzzerZeroPulse();
-            refreshOutputs();
-            oled_clearScreen(OLED_COLOR_WHITE);
-        }
+                refreshOutputs();
+                lastDecayTime = msTicks;
+            }
 
-        lastCh7seg = ch7seg;
+            /* =========================================================================
+             * AUTO DECAY (Niezmienione - co 5 sekund)
+             * ========================================================================= */
+            if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS)
+            {
+                lastDecayTime = msTicks;
 
-        /* Display sensors on OLED every 200ms only when ch7seg != '0' */
-        if ((msTicks - lastOledUpdate) >= 200) {
-            lastOledUpdate = msTicks;
-
-            if (ch7seg != '0') {
-                /* Read sensors */
-                temp = temp_read();
-                lux = light_read();
-
-                /* Read potentiometer if conversion is ready (non-blocking) */
-                if (ADC_ChannelGetStatus(LPC_ADC, ADC_CHANNEL_0, ADC_DATA_DONE)) {
-                    trim = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
+                if (ch7seg > '0')
+                {
+                    ch7seg--;
+                    refreshOutputs();
                 }
+            }
 
-                /* Display on OLED */
-                oled_clearScreen(OLED_COLOR_WHITE);
-                oled_putString(1, 5, (uint8_t*)"Temp[C]: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                intToString(temp, buf, 10, 10);
-                oled_putString(60, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            /* =========================================================================
+             * ZERO EVENT
+             * ========================================================================= */
+            if (ch7seg == '0' && lastCh7seg != '0')
+            {
+                buzzerZeroPulse();
+            }
 
-                oled_putString(1, 20, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                intToString(lux, buf, 10, 10);
-                oled_putString(60, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            lastCh7seg = ch7seg;
 
-                oled_putString(1, 35, (uint8_t*)"Trim: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                intToString(trim, buf, 10, 10);
-                oled_putString(60, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+            /* =========================================================================
+             * MASZYNA STANÓW (Time-Slicing)
+             * Co 200 ms wykonuje się TYLKO JEDNA ciężka operacja, a nie wszystkie na raz!
+             * ========================================================================= */
+            if ((msTicks - lastTaskTime) >= 200)
+            {
+                lastTaskTime = msTicks;
+
+                switch (programStep)
+                {
+                    case 0:
+                        /* Krok 0: Szybki start ADC dla potencjometru */
+                        ADC_StartCmd(LPC_ADC, ADC_START_NOW);
+                        while(!ADC_ChannelGetStatus(LPC_ADC, ADC_CHANNEL_0, ADC_DATA_DONE));
+                        trim = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
+
+                        programStep = 1; /* Przejdź do czytania temperatury w następnej iteracji */
+                        break;
+
+                    case 1:
+                        /* Krok 1: Odczyt temperatury z I2C (często blockujący) */
+                        temp = temp_read();
+
+                        programStep = 2; /* Przejdź do światła */
+                        break;
+
+                    case 2:
+                        /* Krok 2: Odczyt światła z I2C */
+                        lux = light_read();
+
+                        programStep = 3; /* Przejdź do aktualizacji tekstu na OLED */
+                        break;
+
+                    case 3:
+                        /* Krok 3: Wysłanie danych tekstowych na ekran OLED */
+                        oled_putString(1, 5,  (uint8_t*)"Temp[C]: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(temp, buf, 10, 10);
+                        oled_putString(65, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(95, 5,  (uint8_t*)"  ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+                        programStep = 4;
+                        break;
+
+                    case 4:
+                        /* Krok 4: Kolejna część OLED (rozbita, żeby nie słać za dużo bajtów na raz) */
+                        oled_putString(1, 20, (uint8_t*)"Light:   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(lux, buf, 10, 10);
+                        oled_putString(65, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(95, 20, (uint8_t*)"  ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+                        programStep = 5;
+                        break;
+
+                    case 5:
+                        /* Krok 5: Ostatnia część OLED */
+                        oled_putString(1, 35, (uint8_t*)"Trim:    ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(trim, buf, 10, 10);
+                        oled_putString(65, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(95, 35, (uint8_t*)"  ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+                        programStep = 0; /* Powrót do początku układanki */
+                        break;
+
+                    default:
+                        programStep = 0;
+                        break;
+                }
             }
         }
-
-        Timer0_Wait(1);
-    }
 }
+
+
 void check_failed(uint8_t *file, uint32_t line)
 {
 	/* User can add his own implementation to report the file name and line number,
