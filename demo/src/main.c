@@ -12,6 +12,7 @@
 #include "lpc17xx_ssp.h"
 #include "lpc17xx_timer.h"
 #include "lpc17xx_i2c.h"
+#include "lpc17xx_adc.h"
 
 #include "rotary.h"
 #include "led7seg.h"
@@ -250,17 +251,43 @@ static uint32_t getTicks(void)
     return msTicks;
 }
 
+void SysTick_Handler(void)
+{
+    msTicks++;
+}
+
+static void init_adc(void)
+{
+    PINSEL_CFG_Type PinCfg;
+
+    /* Init ADC pin connect - AD0.0 on P0.23 */
+    PinCfg.Funcnum = 1;
+    PinCfg.OpenDrain = 0;
+    PinCfg.Pinmode = 0;
+    PinCfg.Pinnum = 23;
+    PinCfg.Portnum = 0;
+    PINSEL_ConfigPin(&PinCfg);
+
+    /* Configuration for ADC */
+    ADC_Init(LPC_ADC, 200000);
+    ADC_IntConfig(LPC_ADC, ADC_CHANNEL_0, DISABLE);
+    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
+}
+
 
 int main (void) {
 
     uint8_t rotaryState = 0;
-    uint32_t elapsedMs = 0;
+    uint32_t lastDecayTime = 0;
+    uint32_t lastOledUpdate = 0;
     uint8_t lastCh7seg = '0';
     int8_t temp = 0;
     uint32_t lux = 0;
+    uint32_t trim = 0;
 
     init_ssp();
     init_i2c();
+    init_adc();
 
     rotary_init();
     led7seg_init();
@@ -271,21 +298,31 @@ int main (void) {
     light_init();
     temp_init(&getTicks);
 
+    if (SysTick_Config(SystemCoreClock / 1000)) {
+        while (1);  /* Capture error */
+    }
+
     light_enable();
     light_setRange(LIGHT_RANGE_4000);
 
     oled_clearScreen(OLED_COLOR_WHITE);
+    lastDecayTime = msTicks;
+    lastOledUpdate = msTicks;
 
     refreshOutputs();
 
     while (1) {
+        /* Always start ADC conversion (non-blocking) */
+        ADC_StartCmd(LPC_ADC, ADC_START_NOW);
+
         rotaryState = rotary_read();
         if (change7Seg(rotaryState)) {
-            elapsedMs = 0;
+            lastDecayTime = msTicks;  /* Reset decay timer on change */
         }
 
-        if (++elapsedMs >= AUTO_DECAY_INTERVAL_MS) {
-            elapsedMs = 0;
+        /* Decay timer - decrease every 5 seconds */
+        if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS) {
+            lastDecayTime = msTicks;
 
             if (ch7seg > '0') {
                 ch7seg--;
@@ -302,22 +339,33 @@ int main (void) {
 
         lastCh7seg = ch7seg;
 
-        /* Display sensors on OLED only when ch7seg != '0' */
-        if (ch7seg != '0') {
-            if (elapsedMs % 200 == 0) {
+        /* Display sensors on OLED every 200ms only when ch7seg != '0' */
+        if ((msTicks - lastOledUpdate) >= 200) {
+            lastOledUpdate = msTicks;
+
+            if (ch7seg != '0') {
                 /* Read sensors */
                 temp = temp_read();
                 lux = light_read();
 
+                /* Read potentiometer if conversion is ready (non-blocking) */
+                if (ADC_ChannelGetStatus(LPC_ADC, ADC_CHANNEL_0, ADC_DATA_DONE)) {
+                    trim = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
+                }
+
                 /* Display on OLED */
                 oled_clearScreen(OLED_COLOR_WHITE);
-                oled_putString(1, 10, (uint8_t*)"Temp[C]: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                oled_putString(1, 5, (uint8_t*)"Temp[C]: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                 intToString(temp, buf, 10, 10);
-                oled_putString(60, 10, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                oled_putString(60, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
-                oled_putString(1, 30, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                oled_putString(1, 20, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                 intToString(lux, buf, 10, 10);
-                oled_putString(60, 30, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                oled_putString(60, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+                oled_putString(1, 35, (uint8_t*)"Trim: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                intToString(trim, buf, 10, 10);
+                oled_putString(60, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
             }
         }
 
