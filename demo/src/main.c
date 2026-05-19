@@ -261,7 +261,7 @@ int main (void) {
     uint8_t rotaryState = 0;
     uint32_t elapsedMs = 0;
     uint8_t lastCh7seg = '0';
-    uint32_t oledUpdateMs = 0;
+    uint32_t lastOledUpdate = 0;
     int8_t temp = 0;
     uint32_t lux = 0;
 
@@ -311,10 +311,9 @@ int main (void) {
 
         lastCh7seg = ch7seg;
 
-        /* Update OLED every 200ms */
-        oledUpdateMs++;
-        if (oledUpdateMs >= 200) {
-            oledUpdateMs = 0;
+        /* Update OLED every 200ms using system timer */
+        if ((msTicks - lastOledUpdate) >= 200) {
+            lastOledUpdate = msTicks;
 
             /* Read sensors */
             temp = temp_read();
