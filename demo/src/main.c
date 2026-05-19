@@ -11,10 +11,15 @@
 #include "lpc17xx_gpio.h"
 #include "lpc17xx_ssp.h"
 #include "lpc17xx_timer.h"
+#include "lpc17xx_i2c.h"
+#include "lpc17xx_adc.h"
 
 #include "rotary.h"
 #include "led7seg.h"
 #include "rgb.h"
+#include "oled.h"
+#include "temp.h"
+#include "light.h"
 
 #define AUTO_DECAY_INTERVAL_MS 5000
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
@@ -25,6 +30,8 @@
 #define MOTOR_IN2   (1U << 1)
 
 static uint8_t ch7seg = '0';
+static uint8_t buf[10];
+static uint32_t msTicks = 0;
 
 static uint8_t rotate7SegChar(uint8_t ch)
 {
@@ -185,20 +192,156 @@ static void init_motor(void)
     GPIO_ClearValue(MOTOR_PORT, MOTOR_IN2);
 }
 
+static void init_i2c(void)
+{
+    PINSEL_CFG_Type PinCfg;
+
+    /* Initialize I2C2 pin connect */
+    PinCfg.Funcnum = 2;
+    PinCfg.Pinnum = 10;
+    PinCfg.Portnum = 0;
+    PINSEL_ConfigPin(&PinCfg);
+    PinCfg.Pinnum = 11;
+    PINSEL_ConfigPin(&PinCfg);
+
+    /* Initialize I2C peripheral */
+    I2C_Init(LPC_I2C2, 100000);
+
+    /* Enable I2C operation */
+    I2C_Cmd(LPC_I2C2, ENABLE);
+}
+
+static void init_adc(void)
+{
+    PINSEL_CFG_Type PinCfg;
+
+    /* Init ADC pin connect - AD0.0 on P0.23 */
+    PinCfg.Funcnum = 1;
+    PinCfg.OpenDrain = 0;
+    PinCfg.Pinmode = 0;
+    PinCfg.Pinnum = 23;
+    PinCfg.Portnum = 0;
+    PINSEL_ConfigPin(&PinCfg);
+
+    /* Configuration for ADC */
+    ADC_Init(LPC_ADC, 200000);
+    ADC_IntConfig(LPC_ADC, ADC_CHANNEL_0, DISABLE);
+    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
+}
+
+static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
+{
+    static const char* pAscii = "0123456789abcdefghijklmnopqrstuvwxyz";
+    int pos = 0;
+    int tmpValue = value;
+
+    if (pBuf == NULL || len < 2)
+        return;
+
+    if (base < 2 || base > 36)
+        return;
+
+    if (value < 0)
+    {
+        tmpValue = -tmpValue;
+        value = -value;
+        pBuf[pos++] = '-';
+    }
+
+    do {
+        pos++;
+        tmpValue /= base;
+    } while(tmpValue > 0);
+
+    if (pos > len)
+        return;
+
+    pBuf[pos] = '\0';
+
+    do {
+        pBuf[--pos] = pAscii[value % base];
+        value /= base;
+    } while(value > 0);
+}
+
+static void drawTempBar(int8_t temp)
+{
+    uint8_t barWidth;
+
+    /* Normalize temperature to bar width (0-70 pixels) */
+    barWidth = (temp * 70) / 50;
+    if (barWidth > 70) barWidth = 70;
+
+    /* Frame */
+    oled_rect(10, 10, 82, 18, OLED_COLOR_BLACK);
+    /* Filled bar */
+    oled_fillRect(10, 10, 10 + barWidth, 18, OLED_COLOR_BLACK);
+
+    /* Text with value */
+    intToString(temp, buf, 10, 10);
+    oled_putString(10, 20, (uint8_t*)"Temp: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(50, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+}
+
+static void drawLightBar(uint32_t lux)
+{
+    uint8_t barWidth;
+
+    /* Normalize light to bar width (0-70 pixels) */
+    barWidth = (lux * 70) / 4000;
+    if (barWidth > 70) barWidth = 70;
+
+    /* Frame */
+    oled_rect(10, 40, 82, 48, OLED_COLOR_BLACK);
+    /* Filled bar */
+    oled_fillRect(10, 40, 10 + barWidth, 48, OLED_COLOR_BLACK);
+
+    /* Text with value */
+    intToString(lux, buf, 10, 10);
+    oled_putString(10, 50, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(50, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+}
+
+static uint32_t getTicks(void)
+{
+    return msTicks;
+}
+
+
+void SysTick_Handler(void)
+{
+    msTicks++;
+}
 
 int main (void) {
 
     uint8_t rotaryState = 0;
     uint32_t elapsedMs = 0;
     uint8_t lastCh7seg = '0';
+    int8_t temp = 0;
+    uint32_t lux = 0;
 
     init_ssp();
+    init_i2c();
+    init_adc();
 
     rotary_init();
     led7seg_init();
     rgb_init();
     init_buzzer();
     init_motor();
+    oled_init();
+    light_init();
+    temp_init(&getTicks);
+
+    if (SysTick_Config(SystemCoreClock / 1000)) {
+        while (1);  /* Capture error */
+    }
+
+    light_enable();
+    light_setRange(LIGHT_RANGE_4000);
+
+    oled_clearScreen(OLED_COLOR_WHITE);
 
     refreshOutputs();
 
@@ -225,7 +368,18 @@ int main (void) {
 
         lastCh7seg = ch7seg;
 
-        Timer0_Wait(1);
+        /* Read sensors and display on OLED */
+        temp = temp_read();
+        lux = light_read();
+
+        /* Clear display area */
+        oled_fillRect(10, 10, 85, 60, OLED_COLOR_WHITE);
+
+        /* Draw indicator bars */
+        drawTempBar(temp);
+        drawLightBar(lux);
+
+        Timer0_Wait(200);
     }
 }
 void check_failed(uint8_t *file, uint32_t line)
