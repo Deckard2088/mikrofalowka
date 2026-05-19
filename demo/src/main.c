@@ -250,18 +250,12 @@ static uint32_t getTicks(void)
     return msTicks;
 }
 
-void SysTick_Handler(void)
-{
-    msTicks++;
-}
-
 
 int main (void) {
 
     uint8_t rotaryState = 0;
     uint32_t elapsedMs = 0;
     uint8_t lastCh7seg = '0';
-    uint32_t lastOledUpdate = 0;
     int8_t temp = 0;
     uint32_t lux = 0;
 
@@ -276,10 +270,6 @@ int main (void) {
     oled_init();
     light_init();
     temp_init(&getTicks);
-
-    if (SysTick_Config(SystemCoreClock / 1000)) {
-        while (1);  /* Capture error */
-    }
 
     light_enable();
     light_setRange(LIGHT_RANGE_4000);
@@ -311,10 +301,8 @@ int main (void) {
 
         lastCh7seg = ch7seg;
 
-        /* Update OLED every 200ms using system timer */
-        if ((msTicks - lastOledUpdate) >= 200) {
-            lastOledUpdate = msTicks;
-
+        /* Update OLED every 200ms */
+        if (elapsedMs % 200 == 0 && elapsedMs > 0) {
             /* Read sensors */
             temp = temp_read();
             lux = light_read();
