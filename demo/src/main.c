@@ -25,9 +25,11 @@
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
 #define BUZZER_PIN_LOW()  GPIO_ClearValue(0, 1<<26)
 
-#define MOTOR_PORT  2
-#define MOTOR_IN1   (1U << 0)
-#define MOTOR_IN2   (1U << 1)
+#define MOTOR_PORT     2
+#define MOTOR_IN1_PIN  8
+#define MOTOR_IN2_PIN  2
+#define MOTOR_IN1      (1U << MOTOR_IN1_PIN)
+#define MOTOR_IN2      (1U << MOTOR_IN2_PIN)
 
 static uint8_t ch7seg = '0';
 static uint8_t buf[10];
@@ -70,6 +72,7 @@ static void refreshOutputs(void)
     else
         rgb_setLeds(RGB_GREEN);
 
+    motor_setRunning(ch7seg != '0');
 }
 
 static uint8_t change7Seg(uint8_t rotaryDir)
@@ -180,9 +183,9 @@ static void init_motor(void)
     pinCfg.Pinmode = 0;
     pinCfg.Portnum = MOTOR_PORT;
 
-    pinCfg.Pinnum = 0;
+    pinCfg.Pinnum = MOTOR_IN1_PIN;
     PINSEL_ConfigPin(&pinCfg);
-    pinCfg.Pinnum = 1;
+    pinCfg.Pinnum = MOTOR_IN2_PIN;
     PINSEL_ConfigPin(&pinCfg);
 
     GPIO_SetDir(MOTOR_PORT, MOTOR_IN1 | MOTOR_IN2, 1);
@@ -395,7 +398,6 @@ int main(void)
                 {
                     case 0:
                         /* Krok 0: Szybki start ADC dla potencjometru */
-                        motor_setRunning(0);
                         ADC_StartCmd(LPC_ADC, ADC_START_NOW);
                         while(!ADC_ChannelGetStatus(LPC_ADC, ADC_CHANNEL_0, ADC_DATA_DONE));
                         trim = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
@@ -405,7 +407,6 @@ int main(void)
 
                     case 1:
                         /* Krok 1: Odczyt temperatury z I2C (często blockujący) */
-                        motor_setRunning(0);
                         temp = temp_read();
 
                         programStep = 2; /* Przejdź do światła */
@@ -413,7 +414,6 @@ int main(void)
 
                     case 2:
                         /* Krok 2: Odczyt światła z I2C */
-                        motor_setRunning(0);
                         lux = light_read();
 
                         programStep = 3; /* Przejdź do aktualizacji tekstu na OLED */
@@ -421,7 +421,6 @@ int main(void)
 
                     case 3:
                         /* Krok 3: Wysłanie danych tekstowych na ekran OLED */
-                        motor_setRunning(1);
                         oled_putString(1, 5,  (uint8_t*)"Temp[C]: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                         intToString(temp, buf, 10, 10);
                         oled_putString(65, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
@@ -432,7 +431,6 @@ int main(void)
 
                     case 4:
                         /* Krok 4: Kolejna część OLED (rozbita, żeby nie słać za dużo bajtów na raz) */
-                        motor_setRunning(1);
                         oled_putString(1, 20, (uint8_t*)"Light:   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                         intToString(lux, buf, 10, 10);
                         oled_putString(65, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
@@ -443,7 +441,6 @@ int main(void)
 
                     case 5:
                         /* Krok 5: Ostatnia część OLED */
-                        motor_setRunning(1);
                         oled_putString(1, 35, (uint8_t*)"Trim:    ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                         intToString(trim, buf, 10, 10);
                         oled_putString(65, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
