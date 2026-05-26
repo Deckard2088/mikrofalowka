@@ -69,6 +69,16 @@ static void refreshOutputs(void)
         rgb_setLeds(0);
     else
         rgb_setLeds(RGB_GREEN);
+
+    if (ch7seg == '0') {
+        /* Stop motor when timer reaches zero. */
+        GPIO_ClearValue(MOTOR_PORT, MOTOR_IN1 | MOTOR_IN2);
+    }
+    else {
+        /* Forward drive: IN1 high, IN2 low. */
+        GPIO_SetValue(MOTOR_PORT, MOTOR_IN1);
+        GPIO_ClearValue(MOTOR_PORT, MOTOR_IN2);
+    }
 }
 
 static uint8_t change7Seg(uint8_t rotaryDir)
