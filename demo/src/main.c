@@ -17,6 +17,7 @@
 #include "led7seg.h"
 #include "rgb.h"
 #include "oled.h"
+#include "temp.h"
 
 #define AUTO_DECAY_INTERVAL_MS 5000
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
@@ -31,7 +32,7 @@
 #define HCSR04_ECHO_PIN  4
 
 #define DHT11_PORT 0
-#define DHT11_PIN  2
+#define DHT11_PIN  12
 
 static uint8_t ch7seg = '0';
 static uint8_t buf[10];
@@ -85,16 +86,27 @@ static uint8_t change7Seg(uint8_t rotaryDir)
         }
         else {
             ch7seg--;
-        }
+                        {
+                            int32_t tempAbs = temp10;
 
-        if (ch7seg > '9')
-            ch7seg = '0';
-        else if (ch7seg < '0')
-            ch7seg = '9';
+                            if (tempAbs < 0) {
+                                tempAbs = -tempAbs;
+                                oled_putString(1, 5,  (uint8_t*)"T:-", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            }
+                            else {
+                                oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            }
 
-        refreshOutputs();
-        return 1;
-    }
+                            intToString(tempAbs / 10, buf, 10, 10);
+                            oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            intToString(tempAbs % 10, buf, 10, 10);
+                            oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            intToString(dhtHum, buf, 10, 10);
+                            oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        }
 
     return 0;
 }
@@ -376,6 +388,7 @@ int main(void)
     uint8_t lastCh7seg = '0';
 
     uint8_t dhtHum = 0;
+    int32_t temp10 = 0;
     uint32_t distanceCm = 0;
     uint32_t airRaw = 0;
 
@@ -388,6 +401,7 @@ int main(void)
     init_buzzer();
     oled_init();
     init_sensor_gpio();
+    temp_init(&getTicks);
 
     if (SysTick_Config(SystemCoreClock / 1000))
     {
@@ -474,7 +488,10 @@ int main(void)
                         break;
 
                     case 1:
-                        /* Krok 1: Odczyt DHT11 (max ok. 1 Hz) */
+                        /* Krok 1: Odczyt temperatury z czujnika na plytce */
+                        temp10 = temp_read();
+
+                        /* Odczyt DHT11 (max ok. 1 Hz) */
                         if ((msTicks - lastDhtTime) >= 1200) {
                             if (dht11_read(NULL, &dhtHum) == 0) {
                                 lastDhtTime = msTicks;
@@ -493,10 +510,16 @@ int main(void)
 
                     case 3:
                         /* Krok 3: Wysłanie danych tekstowych na ekran OLED */
-                        oled_putString(1, 5,  (uint8_t*)"H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(dhtHum, buf, 10, 10);
+                        oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(temp10 / 10, buf, 10, 10);
                         oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(38, 5,  (uint8_t*)"%   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(temp10 % 10, buf, 10, 10);
+                        oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(dhtHum, buf, 10, 10);
+                        oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
                         programStep = 4;
                         break;
