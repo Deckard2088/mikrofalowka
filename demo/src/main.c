@@ -22,11 +22,6 @@
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
 #define BUZZER_PIN_LOW()  GPIO_ClearValue(0, 1<<26)
 
-#define MOTOR_PORT     2
-#define MOTOR_IN1_PIN  8
-#define MOTOR_IN2_PIN  2
-#define MOTOR_IN1      (1U << MOTOR_IN1_PIN)
-#define MOTOR_IN2      (1U << MOTOR_IN2_PIN)
 
 #define MQ135_ADC_CHANNEL ADC_CHANNEL_0
 
@@ -79,7 +74,6 @@ static void refreshOutputs(void)
     else
         rgb_setLeds(RGB_GREEN);
 
-    motor_setRunning(ch7seg != '0');
 }
 
 static uint8_t change7Seg(uint8_t rotaryDir)
@@ -181,27 +175,6 @@ static void init_ssp(void)
     SSP_Cmd(LPC_SSP1, ENABLE);
 }
 
-static void init_motor(void)
-{
-    PINSEL_CFG_Type pinCfg;
-
-    pinCfg.Funcnum = 0;
-    pinCfg.OpenDrain = 0;
-    pinCfg.Pinmode = 0;
-    pinCfg.Portnum = MOTOR_PORT;
-
-    pinCfg.Pinnum = MOTOR_IN1_PIN;
-    PINSEL_ConfigPin(&pinCfg);
-    pinCfg.Pinnum = MOTOR_IN2_PIN;
-    PINSEL_ConfigPin(&pinCfg);
-
-    GPIO_SetDir(MOTOR_PORT, MOTOR_IN1 | MOTOR_IN2, 1);
-    GPIO_ClearValue(MOTOR_PORT, MOTOR_IN1 | MOTOR_IN2);
-
-    /* Simple forward drive: IN1 high, IN2 low. */
-    GPIO_SetValue(MOTOR_PORT, MOTOR_IN1);
-    GPIO_ClearValue(MOTOR_PORT, MOTOR_IN2);
-}
 
 static void init_sensor_gpio(void)
 {
@@ -329,17 +302,6 @@ static uint32_t hcsr04_read_cm(void)
     return durationUs / 58U;
 }
 
-static void motor_setRunning(uint8_t running)
-{
-    if (running) {
-        /* Forward drive: IN1 high, IN2 low. */
-        GPIO_SetValue(MOTOR_PORT, MOTOR_IN1);
-        GPIO_ClearValue(MOTOR_PORT, MOTOR_IN2);
-    }
-    else {
-        GPIO_ClearValue(MOTOR_PORT, MOTOR_IN1 | MOTOR_IN2);
-    }
-}
 
 static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
 {
@@ -424,7 +386,6 @@ int main(void)
     led7seg_init();
     rgb_init();
     init_buzzer();
-    init_motor();
     oled_init();
     init_sensor_gpio();
 
