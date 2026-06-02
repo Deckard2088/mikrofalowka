@@ -364,26 +364,6 @@ static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
     } while(value > 0);
 }
 
-static void drawLightBar(uint32_t lux)
-{
-    uint8_t barWidth;
-
-    /* Normalize light to bar width (0-70 pixels) */
-    barWidth = (lux * 70U) / 4000U;
-    if (barWidth > 70U) {
-        barWidth = 70U;
-    }
-
-    /* Frame */
-    oled_rect(10, 40, 82, 48, OLED_COLOR_BLACK);
-    /* Filled bar */
-    oled_fillRect(10, 40, 10 + barWidth, 48, OLED_COLOR_BLACK);
-
-    /* Text with value */
-    intToString(lux, buf, 10, 10);
-    oled_putString(10, 50, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-    oled_putString(50, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-}
 
 static uint32_t getTicks(void)
 {
@@ -406,6 +386,7 @@ int main(void)
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
+    uint32_t distancePresent = 0;
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
@@ -529,6 +510,7 @@ int main(void)
                     case 3:
                         /* Krok 3: Odczyt HC-SR04 */
                         distanceCm = hcsr04_read_cm();
+                        distancePresent = (distanceCm > 0U) ? 1U : 0U;
 
                         programStep = 4; /* Przejdź do aktualizacji tekstu na OLED */
                         break;
@@ -563,9 +545,9 @@ int main(void)
                     case 5:
                         /* Krok 5: Kolejna część OLED */
                         oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(distanceCm, buf, 10, 10);
+                        intToString(distancePresent, buf, 10, 10);
                         oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(60, 20, (uint8_t*)"cm ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(60, 20, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
                         programStep = 6;
                         break;
@@ -582,8 +564,10 @@ int main(void)
 
                     case 7:
                         /* Krok 7: Ostatnia część OLED */
-                        oled_fillRect(10, 40, 85, 60, OLED_COLOR_WHITE);
-                        drawLightBar(lux);
+                        oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(lux, buf, 10, 10);
+                        oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
                         programStep = 0; /* Powrót do początku układanki */
                         break;
