@@ -11,15 +11,12 @@
 #include "lpc17xx_gpio.h"
 #include "lpc17xx_ssp.h"
 #include "lpc17xx_timer.h"
-#include "lpc17xx_i2c.h"
 #include "lpc17xx_adc.h"
 
 #include "rotary.h"
 #include "led7seg.h"
 #include "rgb.h"
 #include "oled.h"
-#include "temp.h"
-#include "light.h"
 
 #define AUTO_DECAY_INTERVAL_MS 5000
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
@@ -30,6 +27,16 @@
 #define MOTOR_IN2_PIN  2
 #define MOTOR_IN1      (1U << MOTOR_IN1_PIN)
 #define MOTOR_IN2      (1U << MOTOR_IN2_PIN)
+
+#define MQ135_ADC_CHANNEL ADC_CHANNEL_0
+
+#define HCSR04_TRIG_PORT 2
+#define HCSR04_TRIG_PIN  10
+#define HCSR04_ECHO_PORT 0
+#define HCSR04_ECHO_PIN  4
+
+#define DHT11_PORT 0
+#define DHT11_PIN  2
 
 static uint8_t ch7seg = '0';
 static uint8_t buf[10];
@@ -196,6 +203,132 @@ static void init_motor(void)
     GPIO_ClearValue(MOTOR_PORT, MOTOR_IN2);
 }
 
+static void init_sensor_gpio(void)
+{
+    PINSEL_CFG_Type pinCfg;
+
+    pinCfg.Funcnum = 0;
+    pinCfg.OpenDrain = 0;
+    pinCfg.Pinmode = 0;
+
+    pinCfg.Portnum = HCSR04_TRIG_PORT;
+    pinCfg.Pinnum = HCSR04_TRIG_PIN;
+    PINSEL_ConfigPin(&pinCfg);
+
+    pinCfg.Portnum = HCSR04_ECHO_PORT;
+    pinCfg.Pinnum = HCSR04_ECHO_PIN;
+    PINSEL_ConfigPin(&pinCfg);
+
+    pinCfg.Portnum = DHT11_PORT;
+    pinCfg.Pinnum = DHT11_PIN;
+    PINSEL_ConfigPin(&pinCfg);
+
+    GPIO_SetDir(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN, 1);
+    GPIO_SetDir(HCSR04_ECHO_PORT, 1U << HCSR04_ECHO_PIN, 0);
+
+    GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
+
+    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
+}
+
+static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t timeoutUs)
+{
+    uint32_t elapsed = 0;
+    uint32_t mask = 1U << pin;
+
+    while (((GPIO_ReadValue(port) & mask) != 0) != (level != 0)) {
+        if (elapsed >= timeoutUs) {
+            return -1;
+        }
+        Timer0_us_Wait(1);
+        elapsed++;
+    }
+
+    return 0;
+}
+
+static int dht11_read(uint8_t* tempC, uint8_t* humidity)
+{
+    uint8_t data[5] = {0};
+    uint32_t i = 0;
+    uint32_t bitIndex = 0;
+
+    if (humidity == NULL) {
+        return -1;
+    }
+
+    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 1);
+    GPIO_ClearValue(DHT11_PORT, 1U << DHT11_PIN);
+    Timer0_Wait(20);
+
+    GPIO_SetValue(DHT11_PORT, 1U << DHT11_PIN);
+    Timer0_us_Wait(30);
+    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
+
+    if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
+        return -1;
+    }
+    if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
+        return -1;
+    }
+    if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
+        return -1;
+    }
+
+    for (i = 0; i < 40; i++) {
+        if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
+            return -1;
+        }
+
+        Timer0_us_Wait(40);
+        bitIndex = i / 8;
+        if ((GPIO_ReadValue(DHT11_PORT) & (1U << DHT11_PIN)) != 0) {
+            data[bitIndex] |= (1U << (7 - (i % 8)));
+        }
+
+        if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
+            return -1;
+        }
+    }
+
+    if (((data[0] + data[1] + data[2] + data[3]) & 0xFF) != data[4]) {
+        return -1;
+    }
+
+    *humidity = data[0];
+    if (tempC != NULL) {
+        *tempC = data[2];
+    }
+
+    return 0;
+}
+
+static uint32_t hcsr04_read_cm(void)
+{
+    uint32_t durationUs = 0;
+    uint32_t maxWaitUs = 30000;
+
+    GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
+    Timer0_us_Wait(2);
+    GPIO_SetValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
+    Timer0_us_Wait(10);
+    GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
+
+    if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, maxWaitUs) != 0) {
+        return 0;
+    }
+
+    while ((GPIO_ReadValue(HCSR04_ECHO_PORT) & (1U << HCSR04_ECHO_PIN)) != 0) {
+        if (durationUs >= maxWaitUs) {
+            break;
+        }
+        Timer0_us_Wait(1);
+        durationUs++;
+    }
+
+    return durationUs / 58U;
+}
+
 static void motor_setRunning(uint8_t running)
 {
     if (running) {
@@ -206,25 +339,6 @@ static void motor_setRunning(uint8_t running)
     else {
         GPIO_ClearValue(MOTOR_PORT, MOTOR_IN1 | MOTOR_IN2);
     }
-}
-
-static void init_i2c(void)
-{
-    PINSEL_CFG_Type PinCfg;
-
-    /* Initialize I2C2 pin connect */
-    PinCfg.Funcnum = 2;
-    PinCfg.Pinnum = 10;
-    PinCfg.Portnum = 0;
-    PINSEL_ConfigPin(&PinCfg);
-    PinCfg.Pinnum = 11;
-    PINSEL_ConfigPin(&PinCfg);
-
-    /* Initialize I2C peripheral */
-    I2C_Init(LPC_I2C2, 100000);
-
-    /* Enable I2C operation */
-    I2C_Cmd(LPC_I2C2, ENABLE);
 }
 
 static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
@@ -295,17 +409,15 @@ int main(void)
 {
     uint8_t rotaryState = ROTARY_WAIT;
     uint32_t lastDecayTime = 0;
-    uint32_t lastOledUpdate = 0;
-    uint32_t lastAdcTime = 0;
+    uint32_t lastDhtTime = 0;
 
     uint8_t lastCh7seg = '0';
 
-    int8_t temp = 0;
-    uint32_t lux = 0;
-    uint32_t trim = 0;
+    uint8_t dhtHum = 0;
+    uint32_t distanceCm = 0;
+    uint32_t airRaw = 0;
 
     init_ssp();
-    init_i2c();
     init_adc();
 
     rotary_init();
@@ -314,22 +426,17 @@ int main(void)
     init_buzzer();
     init_motor();
     oled_init();
-    light_init();
-    temp_init(&getTicks);
+    init_sensor_gpio();
 
     if (SysTick_Config(SystemCoreClock / 1000))
     {
         while (1);
     }
 
-    light_enable();
-    light_setRange(LIGHT_RANGE_4000);
-
     oled_clearScreen(OLED_COLOR_WHITE);
 
     lastDecayTime = msTicks;
-    lastOledUpdate = msTicks;
-    lastAdcTime = msTicks;
+    lastDhtTime = msTicks;
 
     refreshOutputs();
 
@@ -397,54 +504,58 @@ int main(void)
                 switch (programStep)
                 {
                     case 0:
-                        /* Krok 0: Szybki start ADC dla potencjometru */
+                        /* Krok 0: Odczyt MQ-135 (ADC) */
                         ADC_StartCmd(LPC_ADC, ADC_START_NOW);
-                        while(!ADC_ChannelGetStatus(LPC_ADC, ADC_CHANNEL_0, ADC_DATA_DONE));
-                        trim = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
+                        while(!ADC_ChannelGetStatus(LPC_ADC, MQ135_ADC_CHANNEL, ADC_DATA_DONE));
+                        airRaw = ADC_ChannelGetData(LPC_ADC, MQ135_ADC_CHANNEL);
 
                         programStep = 1; /* Przejdź do czytania temperatury w następnej iteracji */
                         break;
 
                     case 1:
-                        /* Krok 1: Odczyt temperatury z I2C (często blockujący) */
-                        temp = temp_read();
+                        /* Krok 1: Odczyt DHT11 (max ok. 1 Hz) */
+                        if ((msTicks - lastDhtTime) >= 1200) {
+                            if (dht11_read(NULL, &dhtHum) == 0) {
+                                lastDhtTime = msTicks;
+                            }
+                        }
 
                         programStep = 2; /* Przejdź do światła */
                         break;
 
                     case 2:
-                        /* Krok 2: Odczyt światła z I2C */
-                        lux = light_read();
+                        /* Krok 2: Odczyt HC-SR04 */
+                        distanceCm = hcsr04_read_cm();
 
                         programStep = 3; /* Przejdź do aktualizacji tekstu na OLED */
                         break;
 
                     case 3:
                         /* Krok 3: Wysłanie danych tekstowych na ekran OLED */
-                        oled_putString(1, 5,  (uint8_t*)"Temp[C]: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(temp, buf, 10, 10);
-                        oled_putString(65, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(95, 5,  (uint8_t*)"  ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(1, 5,  (uint8_t*)"H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(dhtHum, buf, 10, 10);
+                        oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(38, 5,  (uint8_t*)"%   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
                         programStep = 4;
                         break;
 
                     case 4:
-                        /* Krok 4: Kolejna część OLED (rozbita, żeby nie słać za dużo bajtów na raz) */
-                        oled_putString(1, 20, (uint8_t*)"Light:   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(lux, buf, 10, 10);
-                        oled_putString(65, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(95, 20, (uint8_t*)"  ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        /* Krok 4: Kolejna część OLED */
+                        oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(distanceCm, buf, 10, 10);
+                        oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(60, 20, (uint8_t*)"cm ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
                         programStep = 5;
                         break;
 
                     case 5:
                         /* Krok 5: Ostatnia część OLED */
-                        oled_putString(1, 35, (uint8_t*)"Trim:    ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(trim, buf, 10, 10);
-                        oled_putString(65, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(95, 35, (uint8_t*)"  ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(airRaw, buf, 10, 10);
+                        oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
                         programStep = 0; /* Powrót do początku układanki */
                         break;
