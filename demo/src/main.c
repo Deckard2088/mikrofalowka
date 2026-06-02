@@ -1,8 +1,8 @@
 /*****************************************************************************
- *   A demo example using several of the peripherals on the base board
+ * A demo example using several of the peripherals on the base board
  *
- *   Copyright(C) 2010, Embedded Artists AB
- *   All rights reserved.
+ * Copyright(C) 2010, Embedded Artists AB
+ * All rights reserved.
  *
  ******************************************************************************/
 
@@ -364,6 +364,14 @@ static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
     } while(value > 0);
 }
 
+static void drawLightBar(uint32_t lux)
+{
+    /* Wyswietlenie tylko wartosci liczbowej - progress bar usuniety */
+    intToString(lux, buf, 10, 10);
+    oled_putString(1, 48, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(50, 48, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(90, 48, (uint8_t*)"lx", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+}
 
 static uint32_t getTicks(void)
 {
@@ -386,7 +394,6 @@ int main(void)
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
-    uint32_t distancePresent = 0;
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
@@ -417,175 +424,172 @@ int main(void)
     refreshOutputs();
 
     /* Dodatkowe zmienne sterujące przed pętlą while(1) */
-        uint32_t lastTaskTime = 0;
-        uint8_t programStep = 0;
+    uint32_t lastTaskTime = 0;
+    uint8_t programStep = 0;
 
-        while (1)
+    while (1)
+    {
+        /* =========================================================================
+         * KROK INTERWENCYJNY: ROTARY (Enkoder musi być czytany non-stop, bez czekania!)
+         * ========================================================================= */
+        rotaryState = rotary_read();
+
+        if (rotaryState == ROTARY_RIGHT)
         {
-            /* =========================================================================
-             * KROK INTERWENCYJNY: ROTARY (Enkoder musi być czytany non-stop, bez czekania!)
-             * ========================================================================= */
-            rotaryState = rotary_read();
+            if (ch7seg >= '9') ch7seg = '0';
+            else ch7seg++;
 
-            if (rotaryState == ROTARY_RIGHT)
+            refreshOutputs();
+            lastDecayTime = msTicks;
+        }
+        else if (rotaryState == ROTARY_LEFT)
+        {
+            if (ch7seg <= '0') ch7seg = '9';
+            else ch7seg--;
+
+            refreshOutputs();
+            lastDecayTime = msTicks;
+        }
+
+        /* =========================================================================
+         * AUTO DECAY (Niezmienione - co 5 sekund)
+         * ========================================================================= */
+        if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS)
+        {
+            lastDecayTime = msTicks;
+
+            if (ch7seg > '0')
             {
-                if (ch7seg >= '9') ch7seg = '0';
-                else ch7seg++;
-
+                ch7seg--;
                 refreshOutputs();
-                lastDecayTime = msTicks;
-            }
-            else if (rotaryState == ROTARY_LEFT)
-            {
-                if (ch7seg <= '0') ch7seg = '9';
-                else ch7seg--;
-
-                refreshOutputs();
-                lastDecayTime = msTicks;
-            }
-
-            /* =========================================================================
-             * AUTO DECAY (Niezmienione - co 5 sekund)
-             * ========================================================================= */
-            if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS)
-            {
-                lastDecayTime = msTicks;
-
-                if (ch7seg > '0')
-                {
-                    ch7seg--;
-                    refreshOutputs();
-                }
-            }
-
-            /* =========================================================================
-             * ZERO EVENT
-             * ========================================================================= */
-            if (ch7seg == '0' && lastCh7seg != '0')
-            {
-                buzzerZeroPulse();
-            }
-
-            lastCh7seg = ch7seg;
-
-
-            /* =========================================================================
-             * MASZYNA STANÓW (Time-Slicing)
-             * Co 200 ms wykonuje się TYLKO JEDNA ciężka operacja, a nie wszystkie na raz!
-             * ========================================================================= */
-            if ((msTicks - lastTaskTime) >= 200)
-            {
-                lastTaskTime = msTicks;
-
-                switch (programStep)
-                {
-                    case 0:
-                        /* Krok 0: Odczyt MQ-135 (DOUT) */
-                        airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
-
-                        programStep = 1; /* Przejdź do czytania temperatury w następnej iteracji */
-                        break;
-
-                    case 1:
-                        /* Krok 1: Odczyt temperatury z czujnika na plytce */
-                        temp10 = temp_read();
-
-                        /* Odczyt DHT11 (max ok. 1 Hz) */
-                        if ((msTicks - lastDhtTime) >= 1200) {
-                            if (dht11_read(NULL, &dhtHum) == 0) {
-                                lastDhtTime = msTicks;
-                            }
-                        }
-
-                        programStep = 2; /* Przejdź do światła */
-                        break;
-
-                    case 2:
-                        /* Krok 2: Odczyt światła (I2C) */
-                        lux = light_read();
-
-                        programStep = 3; /* Przejdź do ultradźwięków */
-                        break;
-
-                    case 3:
-                        /* Krok 3: Odczyt HC-SR04 */
-                        distanceCm = hcsr04_read_cm();
-                        distancePresent = (distanceCm > 0U) ? 1U : 0U;
-
-                        programStep = 4; /* Przejdź do aktualizacji tekstu na OLED */
-                        break;
-
-                    case 4:
-                        /* Krok 4: Wysłanie danych tekstowych na ekran OLED */
-                        {
-                            int32_t tempAbs = temp10;
-
-                            if (tempAbs < 0) {
-                                tempAbs = -tempAbs;
-                                oled_putString(1, 5,  (uint8_t*)"T:-", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            }
-                            else {
-                                oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            }
-
-                            intToString(tempAbs / 10, buf, 10, 10);
-                            oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            intToString(tempAbs % 10, buf, 10, 10);
-                            oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            intToString(dhtHum, buf, 10, 10);
-                            oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        }
-
-                        programStep = 5;
-                        break;
-
-                    case 5:
-                        /* Krok 5: Kolejna część OLED */
-                        oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(distancePresent, buf, 10, 10);
-                        oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(60, 20, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-
-                        programStep = 6;
-                        break;
-
-                    case 6:
-                        /* Krok 6: Kolejna część OLED */
-                        oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(airDigital, buf, 10, 10);
-                        oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-
-                        programStep = 7;
-                        break;
-
-                    case 7:
-                        /* Krok 7: Ostatnia część OLED */
-                        oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(lux, buf, 10, 10);
-                        oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-
-                        programStep = 0; /* Powrót do początku układanki */
-                        break;
-
-                    default:
-                        programStep = 0;
-                        break;
-                }
             }
         }
+
+        /* =========================================================================
+         * ZERO EVENT
+         * ========================================================================= */
+        if (ch7seg == '0' && lastCh7seg != '0')
+        {
+            buzzerZeroPulse();
+        }
+
+        lastCh7seg = ch7seg;
+
+
+        /* =========================================================================
+         * MASZYNA STANÓW (Time-Slicing)
+         * Co 200 ms wykonuje się TYLKO JEDNA ciężka operacja, a nie wszystkie na raz!
+         * ========================================================================= */
+        if ((msTicks - lastTaskTime) >= 200)
+        {
+            lastTaskTime = msTicks;
+
+            switch (programStep)
+            {
+                case 0:
+                    /* Krok 0: Odczyt MQ-135 (DOUT) */
+                    airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
+
+                    programStep = 1; /* Przejdź do czytania temperatury w następnej iteracji */
+                    break;
+
+                case 1:
+                    /* Krok 1: Odczyt temperatury z czujnika na plytce */
+                    temp10 = temp_read();
+
+                    /* Odczyt DHT11 (max ok. 1 Hz) */
+                    if ((msTicks - lastDhtTime) >= 1200) {
+                        if (dht11_read(NULL, &dhtHum) == 0) {
+                            lastDhtTime = msTicks;
+                        }
+                    }
+
+                    programStep = 2; /* Przejdź do światła */
+                    break;
+
+                case 2:
+                    /* Krok 2: Odczyt światła (I2C) */
+                    lux = light_read();
+
+                    programStep = 3; /* Przejdź do ultradźwięków */
+                    break;
+
+                case 3:
+                    /* Krok 3: Odczyt HC-SR04 */
+                    distanceCm = hcsr04_read_cm();
+
+                    programStep = 4; /* Przejdź do aktualizacji tekstu na OLED */
+                    break;
+
+                case 4:
+                    /* Krok 4: Wysłanie danych tekstowych na ekran OLED */
+                    {
+                        int32_t tempAbs = temp10;
+
+                        if (tempAbs < 0) {
+                            tempAbs = -tempAbs;
+                            oled_putString(1, 5,  (uint8_t*)"T:-", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        }
+                        else {
+                            oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        }
+
+                        intToString(tempAbs / 10, buf, 10, 10);
+                        oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(tempAbs % 10, buf, 10, 10);
+                        oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(dhtHum, buf, 10, 10);
+                        oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    }
+
+                    programStep = 5;
+                    break;
+
+                case 5:
+                    /* Krok 5: Kolejna część OLED */
+                    oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    intToString(distanceCm, buf, 10, 10);
+                    oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(60, 20, (uint8_t*)"cm ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+                    programStep = 6;
+                    break;
+
+                case 6:
+                    /* Krok 6: Kolejna część OLED */
+                    oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    intToString(airDigital, buf, 10, 10);
+                    oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+                    programStep = 7;
+                    break;
+
+                case 7:
+                    /* Krok 7: Ostatnia część OLED - czyszczenie paska i tekst */
+                    oled_fillRect(1, 48, 127, 60, OLED_COLOR_WHITE);
+                    drawLightBar(lux);
+
+                    programStep = 0; /* Powrót do początku układanki */
+                    break;
+
+                default:
+                    programStep = 0;
+                    break;
+            }
+        }
+    }
 }
 
-
+//komentarz   
 void check_failed(uint8_t *file, uint32_t line)
 {
-	/* User can add his own implementation to report the file name and line number,
-	 ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+    /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
 
-	/* Infinite loop */
-	while(1);
+    /* Infinite loop */
+    while(1);
 }
