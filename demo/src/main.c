@@ -1,11 +1,10 @@
 /*****************************************************************************
- *   A demo example using several of the peripherals on the base board
+ * A demo example using several of the peripherals on the base board
  *
- *   Copyright(C) 2010, Embedded Artists AB
- *   All rights reserved.
+ * Copyright(C) 2010, Embedded Artists AB
+ * All rights reserved.
  *
  ******************************************************************************/
-
 
 #include "lpc17xx_pinsel.h"
 #include "lpc17xx_gpio.h"
@@ -24,7 +23,6 @@
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
 #define BUZZER_PIN_LOW()  GPIO_ClearValue(0, 1<<26)
 
-
 #define MQ135_DOUT_PORT 0
 #define MQ135_DOUT_PIN  16
 
@@ -40,31 +38,38 @@ static uint8_t ch7seg = '0';
 static uint8_t buf[10];
 static uint32_t msTicks = 0;
 
+/* =========================================================================
+ * NOWE, BEZPIECZNE FUNKCJE OPÓŹNIAJĄCE (Nie resetują Timer0 sprzętowo)
+ * ========================================================================= */
+static void delay_us(uint32_t us)
+{
+    volatile uint32_t count = us * 25; // Kalibracja dla rdzenia Cortex-M3 ~100MHz
+    while(count--) {
+        __NOP(); // Zapobiega optymalizacji pętli przez kompilator
+    }
+}
+
+static void delay_ms(uint32_t ms)
+{
+    while(ms--) {
+        delay_us(1000);
+    }
+}
+
 static uint8_t rotate7SegChar(uint8_t ch)
 {
     switch (ch) {
-    case '0':
-        return '0';
-    case '1':
-        return '|';
-    case '2':
-        return '2';
-    case '3':
-        return 'E';
-    case '4':
-        return 'h';
-    case '5':
-        return '5';
-    case '6':
-        return '9';
-    case '7':
-        return 'L';
-    case '8':
-        return '8';
-    case '9':
-        return '6';
-    default:
-        return ch;
+    case '0': return '0';
+    case '1': return '|';
+    case '2': return '2';
+    case '3': return 'E';
+    case '4': return 'h';
+    case '5': return '5';
+    case '6': return '9';
+    case '7': return 'L';
+    case '8': return '8';
+    case '9': return '6';
+    default:  return ch;
     }
 }
 
@@ -76,13 +81,11 @@ static void refreshOutputs(void)
         rgb_setLeds(0);
     else
         rgb_setLeds(RGB_GREEN);
-
 }
 
 static uint8_t change7Seg(uint8_t rotaryDir)
 {
     if (rotaryDir != ROTARY_WAIT) {
-
         if (rotaryDir == ROTARY_RIGHT) {
             ch7seg++;
         }
@@ -98,9 +101,9 @@ static uint8_t change7Seg(uint8_t rotaryDir)
         refreshOutputs();
         return 1;
     }
-
     return 0;
 }
+
 static void init_buzzer(void)
 {
     /* Speaker amplifier control and buzzer output pin. */
@@ -118,7 +121,6 @@ static void init_buzzer(void)
 static void buzzerPlayTone(uint32_t periodUs, uint32_t durationMs)
 {
     uint32_t elapsed = 0;
-
     while (elapsed < (durationMs * 1000)) {
         BUZZER_PIN_HIGH();
         Timer0_us_Wait(periodUs / 2);
@@ -196,7 +198,6 @@ static void init_i2c(void)
     I2C_Cmd(LPC_I2C2, ENABLE);
 }
 
-
 static void init_sensor_gpio(void)
 {
     PINSEL_CFG_Type pinCfg;
@@ -239,10 +240,9 @@ static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t tim
         if (elapsed >= timeoutUs) {
             return -1;
         }
-        Timer0_us_Wait(1);
+        delay_us(1); // Zastąpiono z: Timer0_us_Wait(1)
         elapsed++;
     }
-
     return 0;
 }
 
@@ -258,10 +258,10 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
 
     GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 1);
     GPIO_ClearValue(DHT11_PORT, 1U << DHT11_PIN);
-    Timer0_Wait(20);
+    delay_ms(20); // Zastąpiono z: Timer0_Wait(20)
 
     GPIO_SetValue(DHT11_PORT, 1U << DHT11_PIN);
-    Timer0_us_Wait(30);
+    delay_us(30); // Zastąpiono z: Timer0_us_Wait(30)
     GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
 
     if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
@@ -279,7 +279,7 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
             return -1;
         }
 
-        Timer0_us_Wait(40);
+        delay_us(40); // Zastąpiono z: Timer0_us_Wait(40)
         bitIndex = i / 8;
         if ((GPIO_ReadValue(DHT11_PORT) & (1U << DHT11_PIN)) != 0) {
             data[bitIndex] |= (1U << (7 - (i % 8)));
@@ -298,7 +298,6 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
     if (tempC != NULL) {
         *tempC = data[2];
     }
-
     return 0;
 }
 
@@ -308,9 +307,9 @@ static uint32_t hcsr04_read_cm(void)
     uint32_t maxWaitUs = 30000;
 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
-    Timer0_us_Wait(2);
+    delay_us(2); // Zastąpiono z: Timer0_us_Wait(2)
     GPIO_SetValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
-    Timer0_us_Wait(10);
+    delay_us(10); // Zastąpiono z: Timer0_us_Wait(10)
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
     if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, maxWaitUs) != 0) {
@@ -321,13 +320,11 @@ static uint32_t hcsr04_read_cm(void)
         if (durationUs >= maxWaitUs) {
             break;
         }
-        Timer0_us_Wait(1);
+        delay_us(1); // Zastąpiono z: Timer0_us_Wait(1)
         durationUs++;
     }
-
     return durationUs / 58U;
 }
-
 
 static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
 {
@@ -363,7 +360,6 @@ static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
         value /= base;
     } while(value > 0);
 }
-
 
 static uint32_t getTicks(void)
 {
@@ -416,176 +412,160 @@ int main(void)
 
     refreshOutputs();
 
-    /* Dodatkowe zmienne sterujące przed pętlą while(1) */
-        uint32_t lastTaskTime = 0;
-        uint8_t programStep = 0;
+    uint32_t lastTaskTime = 0;
+    uint8_t programStep = 0;
 
-        while (1)
+    while (1)
+    {
+        /* =========================================================================
+         * KROK INTERWENCYJNY: ROTARY
+         * ========================================================================= */
+        rotaryState = rotary_read();
+
+        if (rotaryState == ROTARY_RIGHT)
         {
-            /* =========================================================================
-             * KROK INTERWENCYJNY: ROTARY (Enkoder musi być czytany non-stop, bez czekania!)
-             * ========================================================================= */
-            rotaryState = rotary_read();
+            if (ch7seg >= '9') ch7seg = '0';
+            else ch7seg++;
 
-            if (rotaryState == ROTARY_RIGHT)
+            refreshOutputs();
+            lastDecayTime = msTicks;
+        }
+        else if (rotaryState == ROTARY_LEFT)
+        {
+            if (ch7seg <= '0') ch7seg = '9';
+            else ch7seg--;
+
+            refreshOutputs();
+            lastDecayTime = msTicks;
+        }
+
+        /* =========================================================================
+         * AUTO DECAY
+         * ========================================================================= */
+        if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS)
+        {
+            lastDecayTime = msTicks;
+
+            if (ch7seg > '0')
             {
-                if (ch7seg >= '9') ch7seg = '0';
-                else ch7seg++;
-
+                ch7seg--;
                 refreshOutputs();
-                lastDecayTime = msTicks;
-            }
-            else if (rotaryState == ROTARY_LEFT)
-            {
-                if (ch7seg <= '0') ch7seg = '9';
-                else ch7seg--;
-
-                refreshOutputs();
-                lastDecayTime = msTicks;
-            }
-
-            /* =========================================================================
-             * AUTO DECAY (Niezmienione - co 5 sekund)
-             * ========================================================================= */
-            if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS)
-            {
-                lastDecayTime = msTicks;
-
-                if (ch7seg > '0')
-                {
-                    ch7seg--;
-                    refreshOutputs();
-                }
-            }
-
-            /* =========================================================================
-             * ZERO EVENT
-             * ========================================================================= */
-            if (ch7seg == '0' && lastCh7seg != '0')
-            {
-                buzzerZeroPulse();
-            }
-
-            lastCh7seg = ch7seg;
-
-
-            /* =========================================================================
-             * MASZYNA STANÓW (Time-Slicing)
-             * Co 200 ms wykonuje się TYLKO JEDNA ciężka operacja, a nie wszystkie na raz!
-             * ========================================================================= */
-            if ((msTicks - lastTaskTime) >= 200)
-            {
-                lastTaskTime = msTicks;
-
-                switch (programStep)
-                {
-                    case 0:
-                        /* Krok 0: Odczyt MQ-135 (DOUT) */
-                        airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
-
-                        programStep = 1; /* Przejdź do czytania temperatury w następnej iteracji */
-                        break;
-
-                    case 1:
-                        /* Krok 1: Odczyt temperatury z czujnika na plytce */
-                        temp10 = temp_read();
-
-                        /* Odczyt DHT11 (max ok. 1 Hz) */
-                        if ((msTicks - lastDhtTime) >= 1200) {
-                            if (dht11_read(NULL, &dhtHum) == 0) {
-                                lastDhtTime = msTicks;
-                            }
-                        }
-
-                        programStep = 2; /* Przejdź do światła */
-                        break;
-
-                    case 2:
-                        /* Krok 2: Odczyt światła (I2C) */
-                        lux = light_read();
-
-                        programStep = 3; /* Przejdź do ultradźwięków */
-                        break;
-
-                    case 3:
-                        /* Krok 3: Odczyt HC-SR04 */
-                        distanceCm = hcsr04_read_cm();
-                        distancePresent = (distanceCm > 0U) ? 1U : 0U;
-
-                        programStep = 4; /* Przejdź do aktualizacji tekstu na OLED */
-                        break;
-
-                    case 4:
-                        /* Krok 4: Wysłanie danych tekstowych na ekran OLED */
-                        {
-                            int32_t tempAbs = temp10;
-
-                            if (tempAbs < 0) {
-                                tempAbs = -tempAbs;
-                                oled_putString(1, 5,  (uint8_t*)"T:-", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            }
-                            else {
-                                oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            }
-
-                            intToString(tempAbs / 10, buf, 10, 10);
-                            oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            intToString(tempAbs % 10, buf, 10, 10);
-                            oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            intToString(dhtHum, buf, 10, 10);
-                            oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        }
-
-                        programStep = 5;
-                        break;
-
-                    case 5:
-                        /* Krok 5: Kolejna część OLED */
-                        oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(distancePresent, buf, 10, 10);
-                        oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(60, 20, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-
-                        programStep = 6;
-                        break;
-
-                    case 6:
-                        /* Krok 6: Kolejna część OLED */
-                        oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(airDigital, buf, 10, 10);
-                        oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-
-                        programStep = 7;
-                        break;
-
-                    case 7:
-                        /* Krok 7: Ostatnia część OLED */
-                        oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(lux, buf, 10, 10);
-                        oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-
-                        programStep = 0; /* Powrót do początku układanki */
-                        break;
-
-                    default:
-                        programStep = 0;
-                        break;
-                }
             }
         }
-}
 
+        /* =========================================================================
+         * ZERO EVENT
+         * ========================================================================= */
+        if (ch7seg == '0' && lastCh7seg != '0')
+        {
+            buzzerZeroPulse();
+        }
+
+        lastCh7seg = ch7seg;
+
+        /* =========================================================================
+         * MASZYNA STANÓW (Time-Slicing) - Wykonuje się co 200 ms
+         * ========================================================================= */
+        if ((msTicks - lastTaskTime) >= 200)
+        {
+            lastTaskTime = msTicks;
+
+            switch (programStep)
+            {
+                case 0:
+                    /* Krok 0: Odczyt MQ-135 (DOUT) */
+                    airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
+                    programStep = 1; 
+                    break;
+
+                case 1:
+                    /* Krok 1: Odczyt temperatury z czujnika na plytce */
+                    temp10 = temp_read();
+
+                    /* Odczyt DHT11 (max ok. 1 Hz) */
+                    if ((msTicks - lastDhtTime) >= 1200) {
+                        if (dht11_read(NULL, &dhtHum) == 0) {
+                            lastDhtTime = msTicks;
+                        }
+                    }
+                    programStep = 2; 
+                    break;
+
+                case 2:
+                    /* Krok 2: Odczyt światła (I2C) */
+                    lux = light_read();
+                    programStep = 3; 
+                    break;
+
+                case 3:
+                    /* Krok 3: Odczyt HC-SR04 */
+                    distanceCm = hcsr04_read_cm();
+                    distancePresent = (distanceCm > 0U) ? 1U : 0U;
+                    programStep = 4; 
+                    break;
+
+                case 4:
+                    /* Krok 4: Aktualizacja temperatury i wilgotnosci na OLED */
+                    {
+                        int32_t tempAbs = temp10;
+
+                        if (tempAbs < 0) {
+                            tempAbs = -tempAbs;
+                            oled_putString(1, 5,  (uint8_t*)"T:-", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        }
+                        else {
+                            oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        }
+
+                        intToString(tempAbs / 10, buf, 10, 10);
+                        oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(tempAbs % 10, buf, 10, 10);
+                        oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(dhtHum, buf, 10, 10);
+                        oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    }
+                    programStep = 5;
+                    break;
+
+                case 5:
+                    /* Krok 5: Odleglosc na OLED */
+                    oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    intToString(distancePresent, buf, 10, 10);
+                    oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(60, 20, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    programStep = 6;
+                    break;
+
+                case 6:
+                    /* Krok 6: Czujnik gazu na OLED */
+                    oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    intToString(airDigital, buf, 10, 10);
+                    oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    programStep = 7;
+                    break;
+
+                case 7:
+                    /* Krok 7: Swiatlo na OLED */
+                    oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    intToString(lux, buf, 10, 10);
+                    oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    programStep = 0; 
+                    break;
+
+                default:
+                    programStep = 0;
+                    break;
+            }
+        }
+    }
+}
 
 void check_failed(uint8_t *file, uint32_t line)
 {
-	/* User can add his own implementation to report the file name and line number,
-	 ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-
-	/* Infinite loop */
-	while(1);
+    while(1);
 }
