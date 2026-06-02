@@ -12,7 +12,6 @@
 #include "lpc17xx_ssp.h"
 #include "lpc17xx_timer.h"
 #include "lpc17xx_i2c.h"
-#include "lpc17xx_adc.h"
 
 #include "rotary.h"
 #include "led7seg.h"
@@ -26,7 +25,8 @@
 #define BUZZER_PIN_LOW()  GPIO_ClearValue(0, 1<<26)
 
 
-#define MQ135_ADC_CHANNEL ADC_CHANNEL_0
+#define MQ135_DOUT_PORT 0
+#define MQ135_DOUT_PIN  16
 
 #define HCSR04_TRIG_PORT 2
 #define HCSR04_TRIG_PIN  10
@@ -217,12 +217,17 @@ static void init_sensor_gpio(void)
     pinCfg.Pinnum = DHT11_PIN;
     PINSEL_ConfigPin(&pinCfg);
 
+    pinCfg.Portnum = MQ135_DOUT_PORT;
+    pinCfg.Pinnum = MQ135_DOUT_PIN;
+    PINSEL_ConfigPin(&pinCfg);
+
     GPIO_SetDir(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN, 1);
     GPIO_SetDir(HCSR04_ECHO_PORT, 1U << HCSR04_ECHO_PIN, 0);
 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
     GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
+    GPIO_SetDir(MQ135_DOUT_PORT, 1U << MQ135_DOUT_PIN, 0);
 }
 
 static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t timeoutUs)
@@ -359,6 +364,27 @@ static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
     } while(value > 0);
 }
 
+static void drawLightBar(uint32_t lux)
+{
+    uint8_t barWidth;
+
+    /* Normalize light to bar width (0-70 pixels) */
+    barWidth = (lux * 70U) / 4000U;
+    if (barWidth > 70U) {
+        barWidth = 70U;
+    }
+
+    /* Frame */
+    oled_rect(10, 40, 82, 48, OLED_COLOR_BLACK);
+    /* Filled bar */
+    oled_fillRect(10, 40, 10 + barWidth, 48, OLED_COLOR_BLACK);
+
+    /* Text with value */
+    intToString(lux, buf, 10, 10);
+    oled_putString(10, 50, (uint8_t*)"Light: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+    oled_putString(50, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+}
+
 static uint32_t getTicks(void)
 {
     return msTicks;
@@ -368,25 +394,6 @@ void SysTick_Handler(void)
 {
     msTicks++;
 }
-
-static void init_adc(void)
-{
-    PINSEL_CFG_Type PinCfg;
-
-    /* Init ADC pin connect - AD0.0 on P0.23 */
-    PinCfg.Funcnum = 1;
-    PinCfg.OpenDrain = 0;
-    PinCfg.Pinmode = 0;
-    PinCfg.Pinnum = 23;
-    PinCfg.Portnum = 0;
-    PINSEL_ConfigPin(&PinCfg);
-
-    /* Configuration for ADC */
-    ADC_Init(LPC_ADC, 200000);
-    ADC_IntConfig(LPC_ADC, ADC_CHANNEL_0, DISABLE);
-    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
-}
-
 
 int main(void)
 {
@@ -399,12 +406,11 @@ int main(void)
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
-    uint32_t airRaw = 0;
+    uint32_t airDigital = 0;
     uint32_t lux = 0;
 
     init_ssp();
     init_i2c();
-    init_adc();
 
     rotary_init();
     led7seg_init();
@@ -493,10 +499,8 @@ int main(void)
                 switch (programStep)
                 {
                     case 0:
-                        /* Krok 0: Odczyt MQ-135 (ADC) */
-                        ADC_StartCmd(LPC_ADC, ADC_START_NOW);
-                        while(!ADC_ChannelGetStatus(LPC_ADC, MQ135_ADC_CHANNEL, ADC_DATA_DONE));
-                        airRaw = ADC_ChannelGetData(LPC_ADC, MQ135_ADC_CHANNEL);
+                        /* Krok 0: Odczyt MQ-135 (DOUT) */
+                        airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
 
                         programStep = 1; /* Przejdź do czytania temperatury w następnej iteracji */
                         break;
@@ -569,7 +573,7 @@ int main(void)
                     case 6:
                         /* Krok 6: Kolejna część OLED */
                         oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(airRaw, buf, 10, 10);
+                        intToString(airDigital, buf, 10, 10);
                         oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                         oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
@@ -578,10 +582,8 @@ int main(void)
 
                     case 7:
                         /* Krok 7: Ostatnia część OLED */
-                        oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(lux, buf, 10, 10);
-                        oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_fillRect(10, 40, 85, 60, OLED_COLOR_WHITE);
+                        drawLightBar(lux);
 
                         programStep = 0; /* Powrót do początku układanki */
                         break;
