@@ -11,6 +11,7 @@
 #include "lpc17xx_gpio.h"
 #include "lpc17xx_ssp.h"
 #include "lpc17xx_timer.h"
+#include "lpc17xx_i2c.h"
 #include "lpc17xx_adc.h"
 
 #include "rotary.h"
@@ -18,6 +19,7 @@
 #include "rgb.h"
 #include "oled.h"
 #include "temp.h"
+#include "light.h"
 
 #define AUTO_DECAY_INTERVAL_MS 5000
 #define BUZZER_PIN_HIGH() GPIO_SetValue(0, 1<<26)
@@ -173,6 +175,25 @@ static void init_ssp(void)
     SSP_ConfigStructInit(&SSP_ConfigStruct);
     SSP_Init(LPC_SSP1, &SSP_ConfigStruct);
     SSP_Cmd(LPC_SSP1, ENABLE);
+}
+
+static void init_i2c(void)
+{
+    PINSEL_CFG_Type PinCfg;
+
+    /* Initialize I2C2 pin connect */
+    PinCfg.Funcnum = 2;
+    PinCfg.Pinnum = 10;
+    PinCfg.Portnum = 0;
+    PINSEL_ConfigPin(&PinCfg);
+    PinCfg.Pinnum = 11;
+    PINSEL_ConfigPin(&PinCfg);
+
+    /* Initialize I2C peripheral */
+    I2C_Init(LPC_I2C2, 100000);
+
+    /* Enable I2C operation */
+    I2C_Cmd(LPC_I2C2, ENABLE);
 }
 
 
@@ -379,8 +400,10 @@ int main(void)
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
     uint32_t airRaw = 0;
+    uint32_t lux = 0;
 
     init_ssp();
+    init_i2c();
     init_adc();
 
     rotary_init();
@@ -390,6 +413,7 @@ int main(void)
     oled_init();
     init_sensor_gpio();
     temp_init(&getTicks);
+    light_init();
 
     if (SysTick_Config(SystemCoreClock / 1000))
     {
@@ -397,6 +421,8 @@ int main(void)
     }
 
     oled_clearScreen(OLED_COLOR_WHITE);
+    light_enable();
+    light_setRange(LIGHT_RANGE_4000);
 
     lastDecayTime = msTicks;
     lastDhtTime = msTicks;
@@ -490,14 +516,21 @@ int main(void)
                         break;
 
                     case 2:
-                        /* Krok 2: Odczyt HC-SR04 */
-                        distanceCm = hcsr04_read_cm();
+                        /* Krok 2: Odczyt światła (I2C) */
+                        lux = light_read();
 
-                        programStep = 3; /* Przejdź do aktualizacji tekstu na OLED */
+                        programStep = 3; /* Przejdź do ultradźwięków */
                         break;
 
                     case 3:
-                        /* Krok 3: Wysłanie danych tekstowych na ekran OLED */
+                        /* Krok 3: Odczyt HC-SR04 */
+                        distanceCm = hcsr04_read_cm();
+
+                        programStep = 4; /* Przejdź do aktualizacji tekstu na OLED */
+                        break;
+
+                    case 4:
+                        /* Krok 4: Wysłanie danych tekstowych na ekran OLED */
                         {
                             int32_t tempAbs = temp10;
 
@@ -520,25 +553,35 @@ int main(void)
                             oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                         }
 
-                        programStep = 4;
+                        programStep = 5;
                         break;
 
-                    case 4:
-                        /* Krok 4: Kolejna część OLED */
+                    case 5:
+                        /* Krok 5: Kolejna część OLED */
                         oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                         intToString(distanceCm, buf, 10, 10);
                         oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                         oled_putString(60, 20, (uint8_t*)"cm ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
-                        programStep = 5;
+                        programStep = 6;
                         break;
 
-                    case 5:
-                        /* Krok 5: Ostatnia część OLED */
+                    case 6:
+                        /* Krok 6: Kolejna część OLED */
                         oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                         intToString(airRaw, buf, 10, 10);
                         oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                         oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+
+                        programStep = 7;
+                        break;
+
+                    case 7:
+                        /* Krok 7: Ostatnia część OLED */
+                        oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(lux, buf, 10, 10);
+                        oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
                         programStep = 0; /* Powrót do początku układanki */
                         break;
