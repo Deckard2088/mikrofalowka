@@ -86,31 +86,19 @@ static uint8_t change7Seg(uint8_t rotaryDir)
         }
         else {
             ch7seg--;
-                        {
-                            int32_t tempAbs = temp10;
+        }
 
-                            if (tempAbs < 0) {
-                                tempAbs = -tempAbs;
-                                oled_putString(1, 5,  (uint8_t*)"T:-", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            }
-                            else {
-                                oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            }
+        if (ch7seg > '9')
+            ch7seg = '0';
+        else if (ch7seg < '0')
+            ch7seg = '9';
 
-                            intToString(tempAbs / 10, buf, 10, 10);
-                            oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            intToString(tempAbs % 10, buf, 10, 10);
-                            oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            intToString(dhtHum, buf, 10, 10);
-                            oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                            oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        }
+        refreshOutputs();
+        return 1;
+    }
 
     return 0;
 }
-
 static void init_buzzer(void)
 {
     /* Speaker amplifier control and buzzer output pin. */
@@ -510,16 +498,27 @@ int main(void)
 
                     case 3:
                         /* Krok 3: Wysłanie danych tekstowych na ekran OLED */
-                        oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(temp10 / 10, buf, 10, 10);
-                        oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(temp10 % 10, buf, 10, 10);
-                        oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        intToString(dhtHum, buf, 10, 10);
-                        oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                        oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        {
+                            int32_t tempAbs = temp10;
+
+                            if (tempAbs < 0) {
+                                tempAbs = -tempAbs;
+                                oled_putString(1, 5,  (uint8_t*)"T:-", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            }
+                            else {
+                                oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            }
+
+                            intToString(tempAbs / 10, buf, 10, 10);
+                            oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            intToString(tempAbs % 10, buf, 10, 10);
+                            oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            intToString(dhtHum, buf, 10, 10);
+                            oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                            oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        }
 
                         programStep = 4;
                         break;
