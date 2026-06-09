@@ -54,6 +54,9 @@ static uint8_t ch7seg = '0';
 static uint8_t buf[10];
 static uint32_t msTicks = 0;
 
+/* Flaga alarmu odległości (1 - obiekt bliżej niż 5cm, 0 - brak przeszkody) */
+static uint8_t distance_alert = 0;
+
 /* =========================================================================
  * FUNKCJE OPÓŹNIAJĄCE (Sterowane programowo przez pętle procesora)
  * ========================================================================= */
@@ -93,10 +96,19 @@ static void refreshOutputs(void)
 {
     led7seg_setChar(rotate7SegChar(ch7seg), FALSE);
 
-    if (ch7seg == '0')
-        rgb_setLeds(0);
-    else
-        rgb_setLeds(RGB_GREEN);
+    /* Priorytet dla alarmu z czujnika odległości HC-SR04 */
+    if (distance_alert) 
+    {
+        rgb_setLeds(RGB_RED); // Świeci na czerwono, gdy obiekt jest bliżej niż 5cm
+    } 
+    else 
+    {
+        // Standardowe zachowanie zależne od licznika enkodera
+        if (ch7seg == '0')
+            rgb_setLeds(0);
+        else
+            rgb_setLeds(RGB_GREEN);
+    }
 }
 
 static uint8_t change7Seg(uint8_t rotaryDir)
@@ -529,9 +541,18 @@ int main(void)
                     break;
 
                 case 3:
-                    /* Krok 3: Odczyt HC-SR04 */
+                    /* Krok 3: Odczyt HC-SR04 i reakcja na dystans < 5cm */
                     distanceCm = hcsr04_read_cm();
                     distancePresent = (distanceCm > 0U) ? 1U : 0U;
+
+                    /* Aktualizacja flagi ostrzegawczej oraz natychmiastowe odświeżenie LED */
+                    if (distanceCm > 0 && distanceCm < 5) {
+                        distance_alert = 1;
+                    } else {
+                        distance_alert = 0;
+                    }
+                    refreshOutputs();
+
                     programStep = 4;
                     break;
 
