@@ -28,24 +28,20 @@
 #define MQ135_DOUT_PIN  16
 
 /* =========================================================================
- * KONFIGURACJA PINÓW HC-SR04
+ * BEZPIECZNA KONFIGURACJA PINÓW HC-SR04
+ * Trig -> PIO2_1 (P2.1)
+ * Echo -> PIO2_0 (P2.0)
  * ========================================================================= */
 #define HCSR04_TRIG_PORT 2
 #define HCSR04_TRIG_PIN  1
 #define HCSR04_ECHO_PORT 2
-#define HCSR04_ECHO_PIN  0
+#define HCSR04_ECHO_PIN  2
 
 /* =========================================================================
  * KONFIGURACJA PINU DHT11
  * ========================================================================= */
-#define DHT11_PORT 0
-#define DHT11_PIN  21  
-
-/* =========================================================================
- * NOWA KONFIGURACJA PINU DLA SILNICZKA (Przeniesiono na bezpieczny P2.3)
- * ========================================================================= */
-#define MOTOR_PORT 3
-#define MOTOR_PIN  1
+#define DHT11_PORT 2
+#define DHT11_PIN  4  
 
 static uint8_t ch7seg = '0';
 static uint8_t buf[10];
@@ -130,6 +126,41 @@ static void init_buzzer(void)
     BUZZER_PIN_LOW();
 }
 
+static void buzzerPlayTone(uint32_t periodUs, uint32_t durationMs)
+{
+    uint32_t elapsed = 0;
+    while (elapsed < (durationMs * 1000)) {
+        BUZZER_PIN_HIGH();
+        Timer0_us_Wait(periodUs / 2);
+
+        BUZZER_PIN_LOW();
+        Timer0_us_Wait(periodUs / 2);
+
+        elapsed += periodUs;
+    }
+}
+
+static void buzzerZeroPulse(void)
+{
+    buzzerPlayTone(700, 75);
+    Timer0_Wait(25);
+    buzzerPlayTone(430, 75);
+    Timer0_Wait(25);
+    buzzerPlayTone(900, 75);
+    Timer0_Wait(25);
+    buzzerPlayTone(700, 75);
+    Timer0_Wait(25);
+    buzzerPlayTone(430, 75);
+    Timer0_Wait(25);
+    buzzerPlayTone(900, 75);
+    Timer0_Wait(25);
+    buzzerPlayTone(700, 75);
+    Timer0_Wait(25);
+    buzzerPlayTone(430, 75);
+    Timer0_Wait(25);
+    buzzerPlayTone(900, 75);
+}
+
 static void init_ssp(void)
 {
     SSP_CFG_Type SSP_ConfigStruct;
@@ -160,13 +191,10 @@ static void init_i2c(void)
 {
     PINSEL_CFG_Type PinCfg;
 
-    // Konfiguracja SDA (P0.10)
     PinCfg.Funcnum = 2;
     PinCfg.Pinnum = 10;
     PinCfg.Portnum = 0;
     PINSEL_ConfigPin(&PinCfg);
-    
-    // Konfiguracja SCL (P0.11)
     PinCfg.Pinnum = 11;
     PinCfg.Portnum = 0;
     PINSEL_ConfigPin(&PinCfg);
@@ -199,11 +227,6 @@ static void init_sensor_gpio(void)
     pinCfg.Pinnum = MQ135_DOUT_PIN;
     PINSEL_ConfigPin(&pinCfg);
 
-    // Bezpieczna konfiguracja pinu silniczka (P2.3)
-    pinCfg.Portnum = MOTOR_PORT;
-    pinCfg.Pinnum = MOTOR_PIN;
-    PINSEL_ConfigPin(&pinCfg);
-
     GPIO_SetDir(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN, 1); 
     GPIO_SetDir(HCSR04_ECHO_PORT, 1U << HCSR04_ECHO_PIN, 0); 
 
@@ -211,12 +234,9 @@ static void init_sensor_gpio(void)
 
     GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
     GPIO_SetDir(MQ135_DOUT_PORT, 1U << MQ135_DOUT_PIN, 0);
-
-    // Ustawienie pinu silniczka jako WYJŚCIE i wyłączenie go na start
-    GPIO_SetDir(MOTOR_PORT, 1U << MOTOR_PIN, 1);
-    GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN);
 }
 
+/* Ulepszona, bezpieczna funkcja sprawdzania poziomu - nie zawiesza mikrokontrolera */
 static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t timeoutUs)
 {
     uint32_t elapsed = 0;
@@ -232,65 +252,11 @@ static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t tim
     return 0;
 }
 
-static int dht11_read(uint8_t* tempC, uint8_t* humidity)
-{
-    uint8_t data[5] = {0};
-    uint32_t i = 0;
-    uint32_t bitIndex = 0;
-
-    if (humidity == NULL) {
-        return -1;
-    }
-
-    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 1);
-    GPIO_ClearValue(DHT11_PORT, 1U << DHT11_PIN);
-    delay_ms(30); 
-
-    GPIO_SetValue(DHT11_PORT, 1U << DHT11_PIN);
-    delay_us(30); 
-    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
-
-    if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
-        return -1;
-    }
-    if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
-        return -1;
-    }
-    if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
-        return -1;
-    }
-
-    for (i = 0; i < 40; i++) {
-        if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
-            return -1;
-        }
-
-        delay_us(40); 
-        bitIndex = i / 8;
-        if ((GPIO_ReadValue(DHT11_PORT) & (1U << DHT11_PIN)) != 0) {
-            data[bitIndex] |= (1U << (7 - (i % 8)));
-        }
-
-        if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
-            return -1;
-        }
-    }
-
-    if (((data[0] + data[1] + data[2] + data[3]) & 0xFF) != data[4]) {
-        return -1;
-    }
-
-    *humidity = data[0];
-    if (tempC != NULL) {
-        *tempC = data[2];
-    }
-    return 0;
-}
-
+/* Ulepszona wersja odczytu HC-SR04 z ostrymi limitami timeoutu */
 static uint32_t hcsr04_read_cm(void)
 {
     uint32_t durationUs = 0;
-    uint32_t timeoutLimit = 6000; 
+    uint32_t timeoutLimit = 15000; // Skrócony czas oczekiwania, żeby pętla nie blokowała OLED-a
 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
     delay_us(2); 
@@ -298,10 +264,12 @@ static uint32_t hcsr04_read_cm(void)
     delay_us(10); 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
-    if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, 1500) != 0) {
+    // Jeśli czujnik nie odpowie w ciągu 5000 us, przerywamy i zwracamy błąd (0)
+    if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, 5000) != 0) {
         return 0;
     }
 
+    // Odliczanie czasu trwania impulsu Echo z zabezpieczeniem przed utknięciem
     while ((GPIO_ReadValue(HCSR04_ECHO_PORT) & (1U << HCSR04_ECHO_PIN)) != 0) {
         if (durationUs >= timeoutLimit) {
             return 0;
@@ -361,12 +329,7 @@ int main(void)
 {
     uint8_t rotaryState = ROTARY_WAIT;
     uint32_t lastDecayTime = 0;
-    
     uint32_t lastDhtTime = 0;
-    uint32_t lastMqTime = 0;
-    uint32_t lastHcTime = 0;
-    uint32_t lastOledTime = 0;
-    uint32_t lastI2cSensorsTime = 0;
 
     uint8_t lastCh7seg = '0';
 
@@ -399,18 +362,14 @@ int main(void)
 
     lastDecayTime = msTicks;
     lastDhtTime = msTicks;
-    lastMqTime = msTicks;
-    lastHcTime = msTicks;
-    lastOledTime = msTicks;
-    lastI2cSensorsTime = msTicks;
 
     refreshOutputs();
 
+    uint32_t lastTaskTime = 0;
+    uint8_t programStep = 0;
+
     while (1)
     {
-        /* =========================================================================
-         * 1. PRIORYTET: ENKODER ORAZ SILNIK
-         * ========================================================================= */
         rotaryState = rotary_read();
 
         if (rotaryState == ROTARY_RIGHT)
@@ -433,6 +392,7 @@ int main(void)
         if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS)
         {
             lastDecayTime = msTicks;
+
             if (ch7seg > '0')
             {
                 ch7seg--;
@@ -440,88 +400,106 @@ int main(void)
             }
         }
 
-        // Płynne sterowanie silniczkiem na nowym, bezpiecznym pinie P2.3
-        if (ch7seg == '0') {
-            GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN);
-        } else {
-            GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN);
+        /* =========================================================================
+         * EVENT ZEROWANIA: Ekran czyści się na biało TYLKO wtedy, gdy przechodzimy na '0'
+         * ========================================================================= */
+        if (ch7seg == '0' && lastCh7seg != '0')
+        {
+            oled_clearScreen(OLED_COLOR_WHITE); 
+            buzzerZeroPulse();
         }
 
-        if (ch7seg == '0' && lastCh7seg != '0') {
-            oled_clearScreen(OLED_COLOR_WHITE); 
-        }
         lastCh7seg = ch7seg;
 
-        /* =========================================================================
-         * 2. INTERWAŁY CZASOWE CZUJNIKÓW
-         * ========================================================================= */
-        if ((msTicks - lastMqTime) >= 100)
+        if ((msTicks - lastTaskTime) >= 200)
         {
-            lastMqTime = msTicks;
-            airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
-        }
+            lastTaskTime = msTicks;
 
-        if ((msTicks - lastHcTime) >= 150)
-        {
-            lastHcTime = msTicks;
-            distanceCm = hcsr04_read_cm();
-        }
+            switch (programStep)
+            {
+                case 0:
+                    airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
+                    programStep = 1; 
+                    break;
 
-        if ((msTicks - lastI2cSensorsTime) >= 300)
-        {
-            lastI2cSensorsTime = msTicks;
-            temp10 = temp_read();
-            lux = light_read();
-        }
+                case 1:
+                    temp10 = temp_read();
 
-        if ((msTicks - lastDhtTime) >= 2000)
-        {
-            int8_t status = dht11_read(NULL, &dhtHum);
-            if (status == 0) {
-                lastDhtTime = msTicks;
-            } else {
-                dhtHum = 99; 
+                    if ((msTicks - lastDhtTime) >= 1200) {
+                        int8_t status = dht11_read(NULL, &dhtHum);
+                        if (status == 0) {
+                            lastDhtTime = msTicks;
+                        } else {
+                            dhtHum = 99; 
+                        }
+                    }
+                    programStep = 2; 
+                    break;
+
+                case 2:
+                    lux = light_read();
+                    programStep = 3; 
+                    break;
+
+                case 3:
+                    /* Krok 3: Bezpieczny pomiar odległości bez zamrażania programu */
+                    distanceCm = hcsr04_read_cm();
+                    programStep = 4; 
+                    break;
+
+                case 4:
+                    {
+                        int32_t tempAbs = temp10;
+
+                        if (tempAbs < 0) {
+                            tempAbs = -tempAbs;
+                            oled_putString(1, 5,  (uint8_t*)"T:-", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        }
+                        else {
+                            oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        }
+
+                        intToString(tempAbs / 10, buf, 10, 10);
+                        oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(tempAbs % 10, buf, 10, 10);
+                        oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        intToString(dhtHum, buf, 10, 10);
+                        oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                        oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    }
+                    programStep = 5;
+                    break;
+
+                case 5:
+                    oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    intToString(distanceCm, buf, 10, 10);
+                    oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(50, 20, (uint8_t*)"cm   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    programStep = 6;
+                    break;
+
+                case 6:
+                    oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    intToString(airDigital, buf, 10, 10);
+                    oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    programStep = 7;
+                    break;
+
+                case 7:
+                    oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    intToString(lux, buf, 10, 10);
+                    oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    programStep = 0; 
+                    break;
+
+                default:
+                    programStep = 0;
+                    break;
             }
-        }
-
-        /* =========================================================================
-         * 3. ODŚWIEŻANIE OLED (Co 250 ms)
-         * ========================================================================= */
-        if ((msTicks - lastOledTime) >= 250)
-        {
-            lastOledTime = msTicks;
-
-            int32_t tempAbs = temp10;
-            if (tempAbs < 0) {
-                tempAbs = -tempAbs;
-                oled_putString(1, 5,  (uint8_t*)"T:-", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            } else {
-                oled_putString(1, 5,  (uint8_t*)"T: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            }
-            intToString(tempAbs / 10, buf, 10, 10);
-            oled_putString(20, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            oled_putString(38, 5,  (uint8_t*)".", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            intToString(tempAbs % 10, buf, 10, 10);
-            oled_putString(44, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            oled_putString(52, 5,  (uint8_t*)"C H: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            intToString(dhtHum, buf, 10, 10);
-            oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-
-            oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            intToString(distanceCm, buf, 10, 10);
-            oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            oled_putString(50, 20, (uint8_t*)"cm   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-
-            oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            intToString(airDigital, buf, 10, 10);
-            oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-
-            oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            intToString(lux, buf, 10, 10);
-            oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-            oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
         }
     }
 }
