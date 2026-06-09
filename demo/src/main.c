@@ -29,9 +29,9 @@
 #define MQ135_DOUT_PIN  16
 
 #define HCSR04_TRIG_PORT 2
-#define HCSR04_TRIG_PIN  10
-#define HCSR04_ECHO_PORT 0
-#define HCSR04_ECHO_PIN  4
+#define HCSR04_TRIG_PIN  1
+#define HCSR04_ECHO_PORT 2
+#define HCSR04_ECHO_PIN  2
 
 /* =========================================================================
  * KONFIGURACJA PINU DHT11
