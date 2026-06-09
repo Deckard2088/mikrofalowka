@@ -130,41 +130,6 @@ static void init_buzzer(void)
     BUZZER_PIN_LOW();
 }
 
-static void buzzerPlayTone(uint32_t periodUs, uint32_t durationMs)
-{
-    uint32_t elapsed = 0;
-    while (elapsed < (durationMs * 1000)) {
-        BUZZER_PIN_HIGH();
-        Timer0_us_Wait(periodUs / 2);
-
-        BUZZER_PIN_LOW();
-        Timer0_us_Wait(periodUs / 2);
-
-        elapsed += periodUs;
-    }
-}
-
-static void buzzerZeroPulse(void)
-{
-    buzzerPlayTone(700, 75);
-    Timer0_Wait(25);
-    buzzerPlayTone(430, 75);
-    Timer0_Wait(25);
-    buzzerPlayTone(900, 75);
-    Timer0_Wait(25);
-    buzzerPlayTone(700, 75);
-    Timer0_Wait(25);
-    buzzerPlayTone(430, 75);
-    Timer0_Wait(25);
-    buzzerPlayTone(900, 75);
-    Timer0_Wait(25);
-    buzzerPlayTone(700, 75);
-    Timer0_Wait(25);
-    buzzerPlayTone(430, 75);
-    Timer0_Wait(25);
-    buzzerPlayTone(900, 75);
-}
-
 static void init_ssp(void)
 {
     SSP_CFG_Type SSP_ConfigStruct;
@@ -234,7 +199,7 @@ static void init_sensor_gpio(void)
     pinCfg.Pinnum = MQ135_DOUT_PIN;
     PINSEL_ConfigPin(&pinCfg);
 
-    // Konfiguracja pinu silniczka PIO3_0
+    // Konfiguracja pinu silniczka PIO3_0 jako czyste GPIO
     pinCfg.Portnum = MOTOR_PORT;
     pinCfg.Pinnum = MOTOR_PIN;
     PINSEL_ConfigPin(&pinCfg);
@@ -325,7 +290,7 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
 static uint32_t hcsr04_read_cm(void)
 {
     uint32_t durationUs = 0;
-    uint32_t timeoutLimit = 15000; 
+    uint32_t timeoutLimit = 10000; // Ostry limit, żeby nie zamrażać pętli
 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
     delay_us(2); 
@@ -333,7 +298,7 @@ static uint32_t hcsr04_read_cm(void)
     delay_us(10); 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
-    if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, 5000) != 0) {
+    if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, 3000) != 0) {
         return 0;
     }
 
@@ -398,8 +363,6 @@ int main(void)
     uint32_t lastDecayTime = 0;
     uint32_t lastDhtTime = 0;
 
-    uint8_t lastCh7seg = '0';
-
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
@@ -423,6 +386,7 @@ int main(void)
         while (1);
     }
 
+    // Pierwsze czyszczenie ekranu na start systemu
     oled_clearScreen(OLED_COLOR_WHITE);
     light_enable();
     light_setRange(LIGHT_RANGE_4000);
@@ -457,7 +421,7 @@ int main(void)
         }
 
          if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS)
-        {
+         {
             lastDecayTime = msTicks;
 
             if (ch7seg > '0')
@@ -465,30 +429,22 @@ int main(void)
                 ch7seg--;
                 refreshOutputs();
             }
-        }
-
-        if (ch7seg == '0' && lastCh7seg != '0')
-        {
-            oled_clearScreen(OLED_COLOR_WHITE); 
-            buzzerZeroPulse();
-        }
-
-        lastCh7seg = ch7seg;
+         }
 
         /* =========================================================================
-         * REAKCJA SILNICZKA NA STAN WYŚWIETLACZA 7-SEGMENTOWEGO
+         * REAKCJA SILNICZKA (P3.0) NA STAN WYŚWIETLACZA 7-SEGMENTOWEGO
          * ========================================================================= */
         if (ch7seg == '0')
         {
-            GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN); // Silnik STOP
+            GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN); // Jeśli 0 -> STOP
         }
         else
         {
-            GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN);  // Silnik START
+            GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN);  // Jeśli 1-9 -> START
         }
 
         /* =========================================================================
-         * MASZYNA STANÓW
+         * MASZYNA STANÓW (Próbkowanie rozbite równomiernie co 200 ms)
          * ========================================================================= */
         if ((msTicks - lastTaskTime) >= 200)
         {
