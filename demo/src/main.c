@@ -324,6 +324,7 @@ static uint32_t hcsr04_read_cm(void)
         delay_us(1); 
         durationUs++;
     }
+    // Dzielenie przez 58 przelicza czas powrotu fali bezpośrednio na odległość w cm
     return durationUs / 58U;
 }
 
@@ -384,7 +385,6 @@ int main(void)
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
-    uint32_t distancePresent = 0;
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
@@ -505,9 +505,8 @@ int main(void)
                     break;
 
                 case 3:
-                    /* Krok 3: Odczyt HC-SR04 */
+                    /* Krok 3: Odczyt HC-SR04 (zapis odległości w cm) */
                     distanceCm = hcsr04_read_cm();
-                    distancePresent = (distanceCm > 0U) ? 1U : 0U;
                     programStep = 4; 
                     break;
 
@@ -538,11 +537,11 @@ int main(void)
                     break;
 
                 case 5:
-                    /* Krok 5: Odleglosc na OLED */
+                    /* Krok 5: Aktualna odległość z czujnika w cm na OLED */
                     oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    intToString(distancePresent, buf, 10, 10);
+                    intToString(distanceCm, buf, 10, 10);
                     oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    oled_putString(60, 20, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(50, 20, (uint8_t*)"cm   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     programStep = 6;
                     break;
 
