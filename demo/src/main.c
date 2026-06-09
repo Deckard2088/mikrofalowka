@@ -28,9 +28,7 @@
 #define MQ135_DOUT_PIN  16
 
 /* =========================================================================
- * BEZPIECZNA KONFIGURACJA PINÓW HC-SR04
- * Trig -> PIO2_1 (P2.1)
- * Echo -> PIO2_0 (P2.0)
+ * KONFIGURACJA PINÓW HC-SR04
  * ========================================================================= */
 #define HCSR04_TRIG_PORT 2
 #define HCSR04_TRIG_PIN  1
@@ -42,6 +40,12 @@
  * ========================================================================= */
 #define DHT11_PORT 0
 #define DHT11_PIN  21  
+
+/* =========================================================================
+ * KONFIGURACJA PINU DLA SILNICZKA (PIO3_0 -> Port 3, Pin 0)
+ * ========================================================================= */
+#define MOTOR_PORT 3
+#define MOTOR_PIN  0
 
 static uint8_t ch7seg = '0';
 static uint8_t buf[10];
@@ -227,6 +231,11 @@ static void init_sensor_gpio(void)
     pinCfg.Pinnum = MQ135_DOUT_PIN;
     PINSEL_ConfigPin(&pinCfg);
 
+    // Konfiguracja pinu silniczka PIO3_0
+    pinCfg.Portnum = MOTOR_PORT;
+    pinCfg.Pinnum = MOTOR_PIN;
+    PINSEL_ConfigPin(&pinCfg);
+
     GPIO_SetDir(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN, 1); 
     GPIO_SetDir(HCSR04_ECHO_PORT, 1U << HCSR04_ECHO_PIN, 0); 
 
@@ -234,9 +243,12 @@ static void init_sensor_gpio(void)
 
     GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
     GPIO_SetDir(MQ135_DOUT_PORT, 1U << MQ135_DOUT_PIN, 0);
+
+    // Ustawienie pinu silniczka jako WYJŚCIE i wyłączenie go na start
+    GPIO_SetDir(MOTOR_PORT, 1U << MOTOR_PIN, 1);
+    GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN);
 }
 
-/* Ulepszona, bezpieczna funkcja sprawdzania poziomu - nie zawiesza mikrokontrolera */
 static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t timeoutUs)
 {
     uint32_t elapsed = 0;
@@ -252,11 +264,10 @@ static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t tim
     return 0;
 }
 
-/* Ulepszona wersja odczytu HC-SR04 z ostrymi limitami timeoutu */
 static uint32_t hcsr04_read_cm(void)
 {
     uint32_t durationUs = 0;
-    uint32_t timeoutLimit = 15000; // Skrócony czas oczekiwania, żeby pętla nie blokowała OLED-a
+    uint32_t timeoutLimit = 15000; 
 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
     delay_us(2); 
@@ -264,12 +275,10 @@ static uint32_t hcsr04_read_cm(void)
     delay_us(10); 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
-    // Jeśli czujnik nie odpowie w ciągu 5000 us, przerywamy i zwracamy błąd (0)
     if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, 5000) != 0) {
         return 0;
     }
 
-    // Odliczanie czasu trwania impulsu Echo z zabezpieczeniem przed utknięciem
     while ((GPIO_ReadValue(HCSR04_ECHO_PORT) & (1U << HCSR04_ECHO_PIN)) != 0) {
         if (durationUs >= timeoutLimit) {
             return 0;
@@ -389,7 +398,7 @@ int main(void)
             lastDecayTime = msTicks;
         }
 
-        if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS)
+         if ((msTicks - lastDecayTime) >= AUTO_DECAY_INTERVAL_MS)
         {
             lastDecayTime = msTicks;
 
@@ -400,9 +409,6 @@ int main(void)
             }
         }
 
-        /* =========================================================================
-         * EVENT ZEROWANIA: Ekran czyści się na biało TYLKO wtedy, gdy przechodzimy na '0'
-         * ========================================================================= */
         if (ch7seg == '0' && lastCh7seg != '0')
         {
             oled_clearScreen(OLED_COLOR_WHITE); 
@@ -411,6 +417,23 @@ int main(void)
 
         lastCh7seg = ch7seg;
 
+        /* =========================================================================
+         * REAKCJA SILNICZKA NA STAN WYŚWIETLACZA 7-SEGMENTOWEGO
+         * Jeśli ch7seg to znak '0' -> wyłącz silnik (stan niski)
+         * Jeśli ch7seg to cokolwiek innego ('1'-'9') -> włącz silnik (stan wysoki)
+         * ========================================================================= */
+        if (ch7seg == '0')
+        {
+            GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN); // Silnik STOP
+        }
+        else
+        {
+            GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN);  // Silnik START
+        }
+
+        /* =========================================================================
+         * MASZYNA STANÓW
+         * ========================================================================= */
         if ((msTicks - lastTaskTime) >= 200)
         {
             lastTaskTime = msTicks;
@@ -442,7 +465,6 @@ int main(void)
                     break;
 
                 case 3:
-                    /* Krok 3: Bezpieczny pomiar odległości bez zamrażania programu */
                     distanceCm = hcsr04_read_cm();
                     programStep = 4; 
                     break;
