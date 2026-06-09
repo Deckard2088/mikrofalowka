@@ -195,10 +195,13 @@ static void init_i2c(void)
 {
     PINSEL_CFG_Type PinCfg;
 
+    // Konfiguracja SDA (P0.10)
     PinCfg.Funcnum = 2;
     PinCfg.Pinnum = 10;
     PinCfg.Portnum = 0;
     PINSEL_ConfigPin(&PinCfg);
+    
+    // Konfiguracja SCL (P0.11) - POPRAWIONO BŁĄD PRZYPISANIA PORTU
     PinCfg.Pinnum = 11;
     PinCfg.Portnum = 0;
     PINSEL_ConfigPin(&PinCfg);
@@ -419,8 +422,6 @@ int main(void)
 
         /* =========================================================================
          * REAKCJA SILNICZKA NA STAN WYŚWIETLACZA 7-SEGMENTOWEGO
-         * Jeśli ch7seg to znak '0' -> wyłącz silnik (stan niski)
-         * Jeśli ch7seg to cokolwiek innego ('1'-'9') -> włącz silnik (stan wysoki)
          * ========================================================================= */
         if (ch7seg == '0')
         {
