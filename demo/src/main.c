@@ -28,6 +28,10 @@
 #define MQ135_DOUT_PORT 0
 #define MQ135_DOUT_PIN  16
 
+/* =========================================================================
+ * NOWA KONFIGURACJA PINÓW HC-SR04
+ * Trig podłączony pod PIO2_1 (P2.1), Echo podłączony pod PIO2_2 (P2.2)
+ * ========================================================================= */
 #define HCSR04_TRIG_PORT 2
 #define HCSR04_TRIG_PIN  1
 #define HCSR04_ECHO_PORT 2
@@ -193,6 +197,7 @@ static void init_i2c(void)
     PinCfg.Portnum = 0;
     PINSEL_ConfigPin(&PinCfg);
     PinCfg.Pinnum = 11;
+    PinCfg.Portnum = 0;
     PINSEL_ConfigPin(&PinCfg);
 
     I2C_Init(LPC_I2C2, 100000);
@@ -207,10 +212,12 @@ static void init_sensor_gpio(void)
     pinCfg.OpenDrain = 0;
     pinCfg.Pinmode = 0;
 
+    // Konfiguracja nowego pinu Trig (P2.1)
     pinCfg.Portnum = HCSR04_TRIG_PORT;
     pinCfg.Pinnum = HCSR04_TRIG_PIN;
     PINSEL_ConfigPin(&pinCfg);
 
+    // Konfiguracja nowego pinu Echo (P2.2)
     pinCfg.Portnum = HCSR04_ECHO_PORT;
     pinCfg.Pinnum = HCSR04_ECHO_PIN;
     PINSEL_ConfigPin(&pinCfg);
@@ -223,8 +230,9 @@ static void init_sensor_gpio(void)
     pinCfg.Pinnum = MQ135_DOUT_PIN;
     PINSEL_ConfigPin(&pinCfg);
 
-    GPIO_SetDir(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN, 1);
-    GPIO_SetDir(HCSR04_ECHO_PORT, 1U << HCSR04_ECHO_PIN, 0);
+    // Kierunki pinów dla HC-SR04
+    GPIO_SetDir(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN, 1); // Wyjście
+    GPIO_SetDir(HCSR04_ECHO_PORT, 1U << HCSR04_ECHO_PIN, 0); // Wejście
 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
@@ -324,7 +332,6 @@ static uint32_t hcsr04_read_cm(void)
         delay_us(1); 
         durationUs++;
     }
-    // Dzielenie przez 58 przelicza czas powrotu fali bezpośrednio na odległość w cm
     return durationUs / 58U;
 }
 
@@ -505,7 +512,7 @@ int main(void)
                     break;
 
                 case 3:
-                    /* Krok 3: Odczyt HC-SR04 (zapis odległości w cm) */
+                    /* Krok 3: Odczyt HC-SR04 (Zapis rzeczywistej odległości) */
                     distanceCm = hcsr04_read_cm();
                     programStep = 4; 
                     break;
@@ -537,7 +544,7 @@ int main(void)
                     break;
 
                 case 5:
-                    /* Krok 5: Aktualna odległość z czujnika w cm na OLED */
+                    /* Krok 5: Wyświetlanie zmierzonej odległości w cm na OLED */
                     oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     intToString(distanceCm, buf, 10, 10);
                     oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
@@ -560,17 +567,7 @@ int main(void)
                     intToString(lux, buf, 10, 10);
                     oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    programStep = 8; 
-                    break;
-
-                case 8:
-                    /* Krok 8: Okresowe czyszczenie całego ekranu co 3 sekundy */
-                    if ((msTicks - lastOledClearTime) >= OLED_CLEAR_INTERVAL_MS)
-                    {
-                        lastOledClearTime = msTicks;
-                        oled_clearScreen(OLED_COLOR_WHITE); 
-                    }
-                    programStep = 0; 
+                    programStep = 0; // Powrót na początek maszyny stanów
                     break;
 
                 default:
