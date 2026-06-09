@@ -201,7 +201,7 @@ static void init_i2c(void)
     PinCfg.Portnum = 0;
     PINSEL_ConfigPin(&PinCfg);
     
-    // Konfiguracja SCL (P0.11) - POPRAWIONO BŁĄD PRZYPISANIA PORTU
+    // Konfiguracja SCL (P0.11)
     PinCfg.Pinnum = 11;
     PinCfg.Portnum = 0;
     PINSEL_ConfigPin(&PinCfg);
@@ -263,6 +263,61 @@ static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t tim
         }
         delay_us(1); 
         elapsed++;
+    }
+    return 0;
+}
+
+static int dht11_read(uint8_t* tempC, uint8_t* humidity)
+{
+    uint8_t data[5] = {0};
+    uint32_t i = 0;
+    uint32_t bitIndex = 0;
+
+    if (humidity == NULL) {
+        return -1;
+    }
+
+    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 1);
+    GPIO_ClearValue(DHT11_PORT, 1U << DHT11_PIN);
+    delay_ms(30); 
+
+    GPIO_SetValue(DHT11_PORT, 1U << DHT11_PIN);
+    delay_us(30); 
+    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
+
+    if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
+        return -1;
+    }
+    if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
+        return -1;
+    }
+    if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
+        return -1;
+    }
+
+    for (i = 0; i < 40; i++) {
+        if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
+            return -1;
+        }
+
+        delay_us(40); 
+        bitIndex = i / 8;
+        if ((GPIO_ReadValue(DHT11_PORT) & (1U << DHT11_PIN)) != 0) {
+            data[bitIndex] |= (1U << (7 - (i % 8)));
+        }
+
+        if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
+            return -1;
+        }
+    }
+
+    if (((data[0] + data[1] + data[2] + data[3]) & 0xFF) != data[4]) {
+        return -1;
+    }
+
+    *humidity = data[0];
+    if (tempC != NULL) {
+        *tempC = data[2];
     }
     return 0;
 }
