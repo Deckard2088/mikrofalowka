@@ -540,22 +540,18 @@ int main(void)
                     break;
 
                 case 3:
-                    /* Krok 3: Odczyt HC-SR04 i zmiana stanu flagi alarmu */
+                 /* Krok 3: Odczyt HC-SR04 i bezpieczny test dźwiękowy */
                     distanceCm = hcsr04_read_cm();
 
-                    /* Jeśli odległość poprawna i mniejsza niż 5cm -> ustaw flagę */
-                    if (distanceCm > 0 && distanceCm < 5) {
-                        distance_alert = 1;
-                    } else {
-                        distance_alert = 0;
-                    }
-                    
-                    /* Aktualizacja diod na podstawie nowej flagi */
-                    refreshOutputs();
+    // Jeśli obiekt jest bliżej niż 5cm ORAZ akurat nie odtwarza się melodia zera
+                    if (distanceCm > 0 && distanceCm < 5 && ch7seg != '0') 
+                    {
+        // Króciutki sygnał (2000Hz, trwający tylko 15ms) działający jak sonar
+                        buzzerPlayTone(500, 15); 
+                    } 
 
-                    programStep = 4;
-                    break;
-
+    programStep = 4;
+    break;
                 case 4:
                     /* Krok 4: Aktualizacja temperatury i wilgotnosci na OLED */
                     {
