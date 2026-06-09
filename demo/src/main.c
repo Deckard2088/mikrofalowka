@@ -42,10 +42,10 @@
 #define DHT11_PIN  21  
 
 /* =========================================================================
- * KONFIGURACJA PINU DLA SILNICZKA (PIO3_0 -> Port 3, Pin 0)
+ * NOWA KONFIGURACJA PINU DLA SILNICZKA (Przeniesiono na bezpieczny P2.3)
  * ========================================================================= */
 #define MOTOR_PORT 3
-#define MOTOR_PIN  0
+#define MOTOR_PIN  1
 
 static uint8_t ch7seg = '0';
 static uint8_t buf[10];
@@ -199,7 +199,7 @@ static void init_sensor_gpio(void)
     pinCfg.Pinnum = MQ135_DOUT_PIN;
     PINSEL_ConfigPin(&pinCfg);
 
-    // Konfiguracja pinu silniczka PIO3_0
+    // Bezpieczna konfiguracja pinu silniczka (P2.3)
     pinCfg.Portnum = MOTOR_PORT;
     pinCfg.Pinnum = MOTOR_PIN;
     PINSEL_ConfigPin(&pinCfg);
@@ -290,7 +290,7 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
 static uint32_t hcsr04_read_cm(void)
 {
     uint32_t durationUs = 0;
-    uint32_t timeoutLimit = 6000; // Ostry limit mikrosekund, żeby nie blokować procesora
+    uint32_t timeoutLimit = 6000; 
 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
     delay_us(2); 
@@ -298,7 +298,6 @@ static uint32_t hcsr04_read_cm(void)
     delay_us(10); 
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
-    // Krótkie czekanie na Echo (max 1500 us)
     if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, 1500) != 0) {
         return 0;
     }
@@ -363,7 +362,6 @@ int main(void)
     uint8_t rotaryState = ROTARY_WAIT;
     uint32_t lastDecayTime = 0;
     
-    // Niezależne czasy dla każdego zadania (Unikamy jednej wielkiej maszyny stanów)
     uint32_t lastDhtTime = 0;
     uint32_t lastMqTime = 0;
     uint32_t lastHcTime = 0;
@@ -411,7 +409,7 @@ int main(void)
     while (1)
     {
         /* =========================================================================
-         * 1. PRIORYTET: REAKCJA NA ENKODER ORAZ SILNIK (Wykonuje się natychmiast)
+         * 1. PRIORYTET: ENKODER ORAZ SILNIK
          * ========================================================================= */
         rotaryState = rotary_read();
 
@@ -442,38 +440,33 @@ int main(void)
             }
         }
 
-        // Błyskawiczne sterowanie silniczkiem w wolnej pętli
+        // Płynne sterowanie silniczkiem na nowym, bezpiecznym pinie P2.3
         if (ch7seg == '0') {
             GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN);
         } else {
             GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN);
         }
 
-        // Czyszczenie ekranu tylko w momencie przejścia na 0
         if (ch7seg == '0' && lastCh7seg != '0') {
             oled_clearScreen(OLED_COLOR_WHITE); 
         }
         lastCh7seg = ch7seg;
 
         /* =========================================================================
-         * 2. ROZBICIE CZUJNIKÓW NA NIEZALEŻNE INTERWAŁY CZASOWE
+         * 2. INTERWAŁY CZASOWE CZUJNIKÓW
          * ========================================================================= */
-
-        // Zadanie A: Odczyt czujnika gazu MQ-135 (Co 100 ms)
         if ((msTicks - lastMqTime) >= 100)
         {
             lastMqTime = msTicks;
             airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
         }
 
-        // Zadanie B: Odczyt odległości HC-SR04 (Co 150 ms)
         if ((msTicks - lastHcTime) >= 150)
         {
             lastHcTime = msTicks;
             distanceCm = hcsr04_read_cm();
         }
 
-        // Zadanie C: Odczyt peryferiów I2C z płyty (Światło i Temperatura płyty - Co 300 ms)
         if ((msTicks - lastI2cSensorsTime) >= 300)
         {
             lastI2cSensorsTime = msTicks;
@@ -481,25 +474,23 @@ int main(void)
             lux = light_read();
         }
 
-        // Zadanie D: Bardzo powolny odczyt DHT11 (Co 2000 ms - specyfikacja czujnika)
         if ((msTicks - lastDhtTime) >= 2000)
         {
             int8_t status = dht11_read(NULL, &dhtHum);
             if (status == 0) {
                 lastDhtTime = msTicks;
             } else {
-                dhtHum = 99; // Flaga błędu
+                dhtHum = 99; 
             }
         }
 
         /* =========================================================================
-         * 3. WYŚWIETLANIE NA OLED (Odświeżanie danych co 250 ms)
+         * 3. ODŚWIEŻANIE OLED (Co 250 ms)
          * ========================================================================= */
         if ((msTicks - lastOledTime) >= 250)
         {
             lastOledTime = msTicks;
 
-            // Linia 1: DHT11 i Temperatura
             int32_t tempAbs = temp10;
             if (tempAbs < 0) {
                 tempAbs = -tempAbs;
@@ -517,19 +508,16 @@ int main(void)
             oled_putString(78, 5, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
             oled_putString(90, 5,  (uint8_t*)"% ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
-            // Linia 2: Ultradźwięki (HC-SR04)
             oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
             intToString(distanceCm, buf, 10, 10);
             oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
             oled_putString(50, 20, (uint8_t*)"cm   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
-            // Linia 3: Gaz (MQ-135)
             oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
             intToString(airDigital, buf, 10, 10);
             oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
             oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
 
-            // Linia 4: Światło (I2C)
             oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
             intToString(lux, buf, 10, 10);
             oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
