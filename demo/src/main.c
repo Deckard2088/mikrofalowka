@@ -42,7 +42,7 @@
 #define DHT11_PIN  21  
 
 /* =========================================================================
- * NOWA KONFIGURACJA PINU DLA SILNICZKA (Przeniesiono na bezpieczny P2.3)
+ * NOWA KONFIGURACJA PINU DLA SILNICZKA (Przeniesiono na bezpieczny P3.1)
  * ========================================================================= */
 #define MOTOR_PORT 3
 #define MOTOR_PIN  1
@@ -119,14 +119,8 @@ static uint8_t change7Seg(uint8_t rotaryDir)
 
 static void init_buzzer(void)
 {
-    GPIO_SetDir(0, 1<<27, 1);
-    GPIO_SetDir(0, 1<<28, 1);
-    GPIO_SetDir(2, 1<<13, 1);
+    // POPRAWKA: Usunięto linie błędnie konfigurujące P0.27 i P0.28 (piny enkodera)
     GPIO_SetDir(0, 1<<26, 1);
-
-    GPIO_ClearValue(0, 1<<27);
-    GPIO_ClearValue(0, 1<<28);
-    GPIO_ClearValue(2, 1<<13);
     BUZZER_PIN_LOW();
 }
 
@@ -199,7 +193,7 @@ static void init_sensor_gpio(void)
     pinCfg.Pinnum = MQ135_DOUT_PIN;
     PINSEL_ConfigPin(&pinCfg);
 
-    // Bezpieczna konfiguracja pinu silniczka (P2.3)
+    // Bezpieczna konfiguracja pinu silniczka (P3.1)
     pinCfg.Portnum = MOTOR_PORT;
     pinCfg.Pinnum = MOTOR_PIN;
     PINSEL_ConfigPin(&pinCfg);
@@ -376,6 +370,12 @@ int main(void)
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
+    // POPRAWKA: Inicjalizacja licznika systemowego przeniesiona na sam początek
+    if (SysTick_Config(SystemCoreClock / 1000))
+    {
+        while (1);
+    }
+
     init_ssp();
     init_i2c();
 
@@ -387,11 +387,6 @@ int main(void)
     init_sensor_gpio();
     temp_init(&getTicks);
     light_init();
-
-    if (SysTick_Config(SystemCoreClock / 1000))
-    {
-        while (1);
-    }
 
     oled_clearScreen(OLED_COLOR_WHITE);
     light_enable();
@@ -440,7 +435,7 @@ int main(void)
             }
         }
 
-        // Płynne sterowanie silniczkiem na nowym, bezpiecznym pinie P2.3
+        // Sterowanie silniczkiem na bezpiecznym pinie P3.1
         if (ch7seg == '0') {
             GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN);
         } else {
