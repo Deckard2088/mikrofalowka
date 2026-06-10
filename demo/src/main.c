@@ -416,13 +416,14 @@ int main(void)
     uint8_t rotaryState = ROTARY_WAIT;
     uint32_t lastDecayTime = 0;
     uint32_t lastDhtTime = 0;
+    uint32_t lastLightUpdateTime = 0;
 
     uint8_t lastCh7seg = '0';
 
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
-    uint32_t distanceStateProg = 1; // 0 - blisko (<4cm), 1 - daleko (>=4cm)
+    uint32_t distanceStateProg = 1; 
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
@@ -449,6 +450,7 @@ int main(void)
 
     lastDecayTime = msTicks;
     lastDhtTime = msTicks;
+    lastLightUpdateTime = msTicks;
 
     refreshOutputs();
 
@@ -457,6 +459,22 @@ int main(void)
 
     while (1)
     {
+        /* =========================================================================
+         * ODCZYT I AKTUALIZACJA LUXÓW W PĘTLI GŁÓWNEJ (Błyskawiczna reakcja)
+         * Odświeżamy pomiar luksów co 50 ms bezpośrednio w while(1), bez czekania
+         * ========================================================================= */
+        if ((msTicks - lastLightUpdateTime) >= 50) 
+        {
+            lastLightUpdateTime = msTicks;
+            lux = light_read();
+            
+            // Od razu wyrzucamy zaktualizowaną wartość na ekran OLED
+            oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            intToString(lux, buf, 10, 10);
+            oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+        }
+
         /* =========================================================================
          * KROK INTERWENCYJNY: ROTARY
          * ========================================================================= */
@@ -504,7 +522,7 @@ int main(void)
         lastCh7seg = ch7seg;
 
         /* =========================================================================
-         * MASZYNA STANÓW (Time-Slicing) - Wykonuje się co 200 ms
+         * MASZYNA STANÓW (Time-Slicing) - Wykonuje się co 200 ms (Pozostałe sensory)
          * ========================================================================= */
         if ((msTicks - lastTaskTime) >= 200)
         {
@@ -515,11 +533,13 @@ int main(void)
             switch (programStep)
             {
                 case 0:
+                    /* Krok 0: Odczyt MQ-135 */
                     airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
                     programStep = 1;
                     break;
 
                 case 1:
+                    /* Krok 1: Odczyt temperatury bazowej i DHT11 */
                     temp10 = temp_read();
 
                     if ((msTicks - lastDhtTime) >= 3000) {
@@ -532,24 +552,24 @@ int main(void)
                     break;
 
                 case 2:
-                    lux = light_read();
+                    /* Krok 2: Wolny slot po dawnej sekcji light_read() */
                     programStep = 3;
                     break;
 
                 case 3:
-                    /* Krok 3: Odczyt z czujnika */
+                    /* Krok 3: Pomiar odległości */
                     distanceCm = hcsr04_read_cm();
                     
-                    // Zmiana: nowa granica progowa to 4 cm
                     if (distanceCm > 0 && distanceCm < 4) {
-                        distanceStateProg = 1; // Poniżej 4cm -> wyświetla 0
+                        distanceStateProg = 1; 
                     } else {
-                        distanceStateProg = 0; // 4cm lub więcej / brak odczytu -> wyświetla 1
+                        distanceStateProg = 0; 
                     }
                     programStep = 4;
                     break;
 
                 case 4:
+                    /* Krok 4: Aktualizacja temperatury i wilgotności na OLED */
                     {
                         int32_t tempAbs = temp10;
 
@@ -575,31 +595,27 @@ int main(void)
                     break;
 
                 case 5:
-                    /* Krok 5: Aktualizacja stanu na OLED */
+                    /* Krok 5: Wyświetlanie stanu odległości na OLED */
                     oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    
                     intToString(distanceStateProg, buf, 10, 10);
                     oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    
                     oled_putString(40, 20, (uint8_t*)"       ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     programStep = 6;
                     break;
 
                 case 6:
+                    /* Krok 6: Czujnik gazu na OLED */
                     oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     intToString(airDigital, buf, 10, 10);
                     oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    
                     programStep = 7;
                     break;
 
                 case 7:
-                    oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    intToString(lux, buf, 10, 10);
-                    oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    
+                    /* Krok 7: Zamknięcie pętli pomiarowej */
                     programStep = 0; 
                     MOTOR_SET_IDLE();
                     break;
@@ -612,6 +628,7 @@ int main(void)
         }
     }
 }
+
 
 void check_failed(uint8_t *file, uint32_t line)
 {
