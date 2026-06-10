@@ -542,9 +542,9 @@ int main(void)
                     
                     // Zmiana: nowa granica progowa to 4 cm
                     if (distanceCm > 0 && distanceCm < 4) {
-                        distanceStateProg = 0; // Poniżej 4cm -> wyświetla 0
+                        distanceStateProg = 1; // Poniżej 4cm -> wyświetla 0
                     } else {
-                        distanceStateProg = 1; // 4cm lub więcej / brak odczytu -> wyświetla 1
+                        distanceStateProg = 0; // 4cm lub więcej / brak odczytu -> wyświetla 1
                     }
                     programStep = 4;
                     break;
