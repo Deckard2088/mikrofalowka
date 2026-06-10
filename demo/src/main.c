@@ -38,6 +38,10 @@
 #define MQ135_DOUT_PORT 0
 #define MQ135_DOUT_PIN  16
 
+/* =========================================================================
+ * KONFIGURACJA PINÓW HC-SR04
+ * Upewnij się, że piny są poprawnie podłączone fizycznie!
+ * ========================================================================= */
 #define HCSR04_TRIG_PORT 2
 #define HCSR04_TRIG_PIN  4
 #define HCSR04_ECHO_PORT 2
@@ -45,7 +49,6 @@
 
 /* =========================================================================
  * KONFIGURACJA PINU DHT11
- * Upewnij się, że kabelek sygnałowy z czujnika jest fizycznie wpięty w P2.8!
  * ========================================================================= */
 #define DHT11_PORT 2
 #define DHT11_PIN  8  
@@ -222,7 +225,7 @@ static void init_sensor_gpio(void)
     pinCfg.Pinnum = MOTOR_PIN;
     PINSEL_ConfigPin(&pinCfg);
     GPIO_SetDir(MOTOR_PORT, 1U << MOTOR_PIN, 1);
-    MOTOR_SET_IDLE(); // Domyślnie ustawiamy stan 1 (bezczynność)
+    MOTOR_SET_IDLE(); 
 
     pinCfg.Portnum = HCSR04_TRIG_PORT;
     pinCfg.Pinnum = HCSR04_TRIG_PIN;
@@ -409,6 +412,7 @@ int main(void)
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
+    uint32_t distanceStateProg = 1; // 0 - blisko (mniej niż 3cm), 1 - daleko (3cm lub więcej / brak odczytu)
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
@@ -496,7 +500,6 @@ int main(void)
         {
             lastTaskTime = msTicks;
 
-            // Na początku przetwarzania maszyny stanów ustawiamy silnik w stan 0 (BUSY)
             MOTOR_SET_BUSY();
 
             switch (programStep)
@@ -528,8 +531,15 @@ int main(void)
                     break;
 
                 case 3:
-                    /* Krok 3: Odczyt HC-SR04 (Pobranie realnej wartości w cm) */
+                    /* Krok 3: Odczyt HC-SR04 i warunek progowy 3 cm */
                     distanceCm = hcsr04_read_cm();
+                    
+                    // Zabezpieczenie: odczyt musi być > 0 (wykryto przeszkodę) i < 3 (jest blisko)
+                    if (distanceCm > 0 && distanceCm < 3) {
+                        distanceStateProg = 0; // Blisko -> Wyświetli 0
+                    } else {
+                        distanceStateProg = 1; // Daleko lub brak odczytu -> Wyświetli 1
+                    }
                     programStep = 4;
                     break;
 
@@ -560,14 +570,14 @@ int main(void)
                     break;
 
                 case 5:
-                    /* Krok 5: Realna odległość w centymetrach na ekranie OLED */
+                    /* Krok 5: Wyświetlanie stanu progowego (0 lub 1) na OLED */
                     oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
-                    intToString(distanceCm, buf, 10, 10);
+                    intToString(distanceStateProg, buf, 10, 10);
                     oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
-                    // Jednostka "cm" z dodatkowymi spacjami czyszczącymi poprzednie znaki
-                    oled_putString(60, 20, (uint8_t*)"cm   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    // Nadpisanie starych napisów jednostki pustymi spacjami
+                    oled_putString(60, 20, (uint8_t*)"     ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     programStep = 6;
                     break;
@@ -589,8 +599,6 @@ int main(void)
                     oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     programStep = 0; 
-
-                    // Koniec całego cyklu pomiarowego w tym oknie czasowym - przechodzimy w stan bezczynności (1)
                     MOTOR_SET_IDLE();
                     break;
 
