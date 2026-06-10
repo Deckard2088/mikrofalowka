@@ -27,19 +27,17 @@
 
 /* =========================================================================
  * KONFIGURACJA STEROWANIA SILNIKIEM
+ * Pin ustawiony na 0 podczas wykonywania pętli pomiarowej, 1 podczas bezczynności
  * ========================================================================= */
 #define MOTOR_PORT      2
-#define MOTOR_PIN        0   
+#define MOTOR_PIN        0   // Możesz zmienić na inny wolny pin GPIO
 
-#define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    
-#define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  
+#define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    // Stan 1 (bezczynność)
+#define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  // Stan 0 (wykonywanie pętli)
 
 #define MQ135_DOUT_PORT 0
 #define MQ135_DOUT_PIN  16
 
-/* =========================================================================
- * KONFIGURACJA PINÓW HC-SR04 
- * ========================================================================= */
 #define HCSR04_TRIG_PORT 2
 #define HCSR04_TRIG_PIN  4
 #define HCSR04_ECHO_PORT 2
@@ -47,6 +45,7 @@
 
 /* =========================================================================
  * KONFIGURACJA PINU DHT11
+ * Upewnij się, że kabelek sygnałowy z czujnika jest fizycznie wpięty w P2.8!
  * ========================================================================= */
 #define DHT11_PORT 2
 #define DHT11_PIN  8  
@@ -56,7 +55,7 @@ static uint8_t buf[10];
 static uint32_t msTicks = 0;
 
 /* =========================================================================
- * FUNKCJE OPÓŹNIAJĄCE
+ * FUNKCJE OPÓŹNIAJĄCE (Sterowane programowo przez pętle procesora)
  * ========================================================================= */
 static void delay_us(uint32_t us)
 {
@@ -218,11 +217,12 @@ static void init_sensor_gpio(void)
     pinCfg.OpenDrain = 0;
     pinCfg.Pinmode = 0;
 
+    // Inicjalizacja pinu silnika jako wyjście GPIO
     pinCfg.Portnum = MOTOR_PORT;
     pinCfg.Pinnum = MOTOR_PIN;
     PINSEL_ConfigPin(&pinCfg);
     GPIO_SetDir(MOTOR_PORT, 1U << MOTOR_PIN, 1);
-    MOTOR_SET_IDLE(); 
+    MOTOR_SET_IDLE(); // Domyślnie ustawiamy stan 1 (bezczynność)
 
     pinCfg.Portnum = HCSR04_TRIG_PORT;
     pinCfg.Pinnum = HCSR04_TRIG_PIN;
@@ -330,27 +330,44 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
 
 static uint32_t hcsr04_read_cm(void)
 {
-    uint32_t durationUs = 0;
+    uint32_t echoTimeUs = 0;
     uint32_t maxWaitUs = 30000;
+    uint32_t timeoutCounter = 0;
 
+    // 1. Wysłanie impulsu TRIG (10 us)
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
     delay_us(2);
     GPIO_SetValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
     delay_us(10);
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
+    // 2. Oczekiwanie na pojawienie się stanu wysokiego (ECHO = 1) z timeoutem
     if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, maxWaitUs) != 0) {
-        return 0;
+        return 0; // Brak odpowiedzi z czujnika
     }
 
+    // 3. START POMIARU: Resetujemy i uruchamiamy sprzętowy Timer0
+    LPC_TIM0->TCR = 0x02; // Resetuj licznik Timer0
+    LPC_TIM0->TCR = 0x01; // Uruchom Timer0
+
+    // 4. Czekamy, aż ECHO opadnie (ECHO = 0)
+    // Bezpieczny licznik chroni przed zawieszeniem pętli, jeśli czujnik zgubi sygnał
     while ((GPIO_ReadValue(HCSR04_ECHO_PORT) & (1U << HCSR04_ECHO_PIN)) != 0) {
-        if (durationUs >= maxWaitUs) {
+        timeoutCounter++;
+        if (timeoutCounter > 500000) { // Awaryjne przerwanie pętli
             break;
         }
-        delay_us(1);
-        durationUs++;
     }
-    return durationUs / 58U;
+
+    // 5. STOP POMIARU: Odczytujemy wartość bezpośrednio z rejestru licznika (TC)
+    echoTimeUs = LPC_TIM0->TC; 
+    LPC_TIM0->TCR = 0x00; // Zatrzymaj Timer0
+
+    // Jeśli Timer0 jest skonfigurowany w Twojej bibliotece na tykanie co 1 us (PCLK = 25MHz, Prescaler = 24),
+    // to wartość w TC to bezpośrednio mikrosekundy.
+    // Dla pewności: jeśli wynik będzie za mały/za duży, skorygujemy preskaler.
+    
+    return echoTimeUs / 58U;
 }
 
 static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
@@ -496,18 +513,22 @@ int main(void)
         {
             lastTaskTime = msTicks;
 
+            // Na początku przetwarzania maszyny stanów ustawiamy silnik w stan 0 (BUSY)
             MOTOR_SET_BUSY();
 
             switch (programStep)
             {
                 case 0:
+                    /* Krok 0: Odczyt MQ-135 (DOUT) */
                     airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
                     programStep = 1;
                     break;
 
                 case 1:
+                    /* Krok 1: Odczyt temperatury z czujnika na plytce */
                     temp10 = temp_read();
 
+                    /* Odczyt DHT11 */
                     if ((msTicks - lastDhtTime) >= 3000) {
                         int8_t status = dht11_read(NULL, &dhtHum);
                         if (status == 0) {
@@ -518,17 +539,19 @@ int main(void)
                     break;
 
                 case 2:
+                    /* Krok 2: Odczyt światła (I2C) */
                     lux = light_read();
                     programStep = 3;
                     break;
 
                 case 3:
-                    /* KROK 3: Pobieramy SUROWĄ wartość pomiaru */
+                    /* Krok 3: Odczyt HC-SR04 (Pobranie realnej wartości w cm) */
                     distanceCm = hcsr04_read_cm();
                     programStep = 4;
                     break;
 
                 case 4:
+                    /* Krok 4: Aktualizacja temperatury i wilgotnosci na OLED */
                     {
                         int32_t tempAbs = temp10;
 
@@ -554,19 +577,20 @@ int main(void)
                     break;
 
                 case 5:
-                    /* KROK 5: Wypisujemy dokładną wartość cm na ekranie */
+                    /* Krok 5: Realna odległość w centymetrach na ekranie OLED */
                     oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     intToString(distanceCm, buf, 10, 10);
                     oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
-                    // Pokazujemy "cm" i czyścimy stare znaki spacji
-                    oled_putString(55, 20, (uint8_t*)"cm    ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    // Jednostka "cm" z dodatkowymi spacjami czyszczącymi poprzednie znaki
+                    oled_putString(60, 20, (uint8_t*)"cm   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     programStep = 6;
                     break;
 
                 case 6:
+                    /* Krok 6: Czujnik gazu na OLED */
                     oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     intToString(airDigital, buf, 10, 10);
                     oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
@@ -575,12 +599,15 @@ int main(void)
                     break;
 
                 case 7:
+                    /* Krok 7: Swiatlo na OLED */
                     oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     intToString(lux, buf, 10, 10);
                     oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     programStep = 0; 
+
+                    // Koniec całego cyklu pomiarowego w tym oknie czasowym - przechodzimy w stan bezczynności (1)
                     MOTOR_SET_IDLE();
                     break;
 
