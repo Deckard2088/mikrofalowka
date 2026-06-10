@@ -27,13 +27,12 @@
 
 /* =========================================================================
  * KONFIGURACJA STEROWANIA SILNIKIEM
- * Pin ustawiony na 0 podczas wykonywania pętli pomiarowej, 1 podczas bezczynności
  * ========================================================================= */
 #define MOTOR_PORT      2
-#define MOTOR_PIN        0   // Możesz zmienić na inny wolny pin GPIO
+#define MOTOR_PIN        0   
 
-#define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    // Stan 1 (bezczynność)
-#define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  // Stan 0 (wykonywanie pętli)
+#define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    
+#define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  
 
 #define MQ135_DOUT_PORT 0
 #define MQ135_DOUT_PIN  16
@@ -45,7 +44,6 @@
 
 /* =========================================================================
  * KONFIGURACJA PINU DHT11
- * Upewnij się, że kabelek sygnałowy z czujnika jest fizycznie wpięty w P2.8!
  * ========================================================================= */
 #define DHT11_PORT 2
 #define DHT11_PIN  8  
@@ -55,7 +53,7 @@ static uint8_t buf[10];
 static uint32_t msTicks = 0;
 
 /* =========================================================================
- * FUNKCJE OPÓŹNIAJĄCE (Sterowane programowo przez pętle procesora)
+ * FUNKCJE OPÓŹNIAJĄCE
  * ========================================================================= */
 static void delay_us(uint32_t us)
 {
@@ -217,12 +215,11 @@ static void init_sensor_gpio(void)
     pinCfg.OpenDrain = 0;
     pinCfg.Pinmode = 0;
 
-    // Inicjalizacja pinu silnika jako wyjście GPIO
     pinCfg.Portnum = MOTOR_PORT;
     pinCfg.Pinnum = MOTOR_PIN;
     PINSEL_ConfigPin(&pinCfg);
     GPIO_SetDir(MOTOR_PORT, 1U << MOTOR_PIN, 1);
-    MOTOR_SET_IDLE(); // Domyślnie ustawiamy stan 1 (bezczynność)
+    MOTOR_SET_IDLE(); 
 
     pinCfg.Portnum = HCSR04_TRIG_PORT;
     pinCfg.Pinnum = HCSR04_TRIG_PIN;
@@ -333,6 +330,9 @@ static uint32_t hcsr04_read_cm(void)
     uint32_t echoTimeUs = 0;
     uint32_t maxWaitUs = 30000;
     uint32_t timeoutCounter = 0;
+    
+    // Zapamiętujemy stary preskaler, żeby nic nie popsuć w systemie
+    uint32_t oldPR = LPC_TIM0->PR; 
 
     // 1. Wysłanie impulsu TRIG (10 us)
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
@@ -341,32 +341,29 @@ static uint32_t hcsr04_read_cm(void)
     delay_us(10);
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
-    // 2. Oczekiwanie na pojawienie się stanu wysokiego (ECHO = 1) z timeoutem
+    // 2. Oczekiwanie na ECHO = 1
     if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, maxWaitUs) != 0) {
-        return 0; // Brak odpowiedzi z czujnika
+        return 0; 
     }
 
-    // 3. START POMIARU: Resetujemy i uruchamiamy sprzętowy Timer0
-    LPC_TIM0->TCR = 0x02; // Resetuj licznik Timer0
-    LPC_TIM0->TCR = 0x01; // Uruchom Timer0
+    // 3. START POMIARU
+    LPC_TIM0->TCR = 0x02; // Reset licznika
+    LPC_TIM0->PR  = 24;   // WYMUSZENIE: Zliczaj dokładnie co 1 us (dla PCLK = 25MHz)
+    LPC_TIM0->TCR = 0x01; // Uruchom stoper
 
-    // 4. Czekamy, aż ECHO opadnie (ECHO = 0)
-    // Bezpieczny licznik chroni przed zawieszeniem pętli, jeśli czujnik zgubi sygnał
+    // 4. Czekamy na opadnięcie ECHO = 0
     while ((GPIO_ReadValue(HCSR04_ECHO_PORT) & (1U << HCSR04_ECHO_PIN)) != 0) {
         timeoutCounter++;
-        if (timeoutCounter > 500000) { // Awaryjne przerwanie pętli
+        if (timeoutCounter > 600000) { 
             break;
         }
     }
 
-    // 5. STOP POMIARU: Odczytujemy wartość bezpośrednio z rejestru licznika (TC)
+    // 5. STOP POMIARU
     echoTimeUs = LPC_TIM0->TC; 
-    LPC_TIM0->TCR = 0x00; // Zatrzymaj Timer0
+    LPC_TIM0->TCR = 0x00;   // Zatrzymaj stoper
+    LPC_TIM0->PR  = oldPR;  // Przywracamy stary preskaler dla reszty programu
 
-    // Jeśli Timer0 jest skonfigurowany w Twojej bibliotece na tykanie co 1 us (PCLK = 25MHz, Prescaler = 24),
-    // to wartość w TC to bezpośrednio mikrosekundy.
-    // Dla pewności: jeśli wynik będzie za mały/za duży, skorygujemy preskaler.
-    
     return echoTimeUs / 58U;
 }
 
@@ -426,6 +423,7 @@ int main(void)
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
+    uint32_t distanceStateProg = 1; // 0 - blisko, 1 - daleko / brak
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
@@ -513,22 +511,18 @@ int main(void)
         {
             lastTaskTime = msTicks;
 
-            // Na początku przetwarzania maszyny stanów ustawiamy silnik w stan 0 (BUSY)
             MOTOR_SET_BUSY();
 
             switch (programStep)
             {
                 case 0:
-                    /* Krok 0: Odczyt MQ-135 (DOUT) */
                     airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
                     programStep = 1;
                     break;
 
                 case 1:
-                    /* Krok 1: Odczyt temperatury z czujnika na plytce */
                     temp10 = temp_read();
 
-                    /* Odczyt DHT11 */
                     if ((msTicks - lastDhtTime) >= 3000) {
                         int8_t status = dht11_read(NULL, &dhtHum);
                         if (status == 0) {
@@ -539,19 +533,24 @@ int main(void)
                     break;
 
                 case 2:
-                    /* Krok 2: Odczyt światła (I2C) */
                     lux = light_read();
                     programStep = 3;
                     break;
 
                 case 3:
-                    /* Krok 3: Odczyt HC-SR04 (Pobranie realnej wartości w cm) */
+                    /* Krok 3: Precyzyjny pomiar odległości */
                     distanceCm = hcsr04_read_cm();
+                    
+                    // Logika progowa: 0 dla blisko (< 3cm), 1 dla daleko/braku odczytu
+                    if (distanceCm > 0 && distanceCm < 3) {
+                        distanceStateProg = 0; 
+                    } else {
+                        distanceStateProg = 1; 
+                    }
                     programStep = 4;
                     break;
 
                 case 4:
-                    /* Krok 4: Aktualizacja temperatury i wilgotnosci na OLED */
                     {
                         int32_t tempAbs = temp10;
 
@@ -577,20 +576,19 @@ int main(void)
                     break;
 
                 case 5:
-                    /* Krok 5: Realna odległość w centymetrach na ekranie OLED */
+                    /* Krok 5: Wyświetlanie 0 lub 1 na ekranie OLED */
                     oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
-                    intToString(distanceCm, buf, 10, 10);
+                    intToString(distanceStateProg, buf, 10, 10);
                     oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
-                    // Jednostka "cm" z dodatkowymi spacjami czyszczącymi poprzednie znaki
-                    oled_putString(60, 20, (uint8_t*)"cm   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    // Czyszczenie tła po dawnej jednostce centymetrów
+                    oled_putString(40, 20, (uint8_t*)"       ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     programStep = 6;
                     break;
 
                 case 6:
-                    /* Krok 6: Czujnik gazu na OLED */
                     oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     intToString(airDigital, buf, 10, 10);
                     oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
@@ -599,15 +597,12 @@ int main(void)
                     break;
 
                 case 7:
-                    /* Krok 7: Swiatlo na OLED */
                     oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     intToString(lux, buf, 10, 10);
                     oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     programStep = 0; 
-
-                    // Koniec całego cyklu pomiarowego w tym oknie czasowym - przechodzimy w stan bezczynności (1)
                     MOTOR_SET_IDLE();
                     break;
 
