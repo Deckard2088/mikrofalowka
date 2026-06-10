@@ -34,8 +34,8 @@
 #define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    
 #define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  
 
-#define MQ135_DOUT_PORT 0
-#define MQ135_DOUT_PIN  16
+#define MQ135_DOUT_PORT 2
+#define MQ135_DOUT_PIN  10
 
 #define HCSR04_TRIG_PORT 2
 #define HCSR04_TRIG_PIN  4
@@ -50,7 +50,7 @@
 
 static uint8_t ch7seg = '0';
 static uint8_t buf[10];
-static uint32_t msTicks = 0;
+static volatile uint32_t msTicks = 0;
 
 /* =========================================================================
  * FUNKCJE OPÓŹNIAJĄCE
@@ -261,6 +261,9 @@ static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t tim
     return 0;
 }
 
+/* =========================================================================
+ * BEZPIECZNA FUNKCJA ODCZYTU DHT11 (Zabezpieczona przed zawieszaniem linii)
+ * ========================================================================= */
 static int dht11_read(uint8_t* tempC, uint8_t* humidity)
 {
     uint8_t data[5] = {0};
@@ -271,30 +274,38 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
         return -1;
     }
 
+    // Upewniamy się, że linia zaczyna od czystego stanu wysokiego
     GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 1);
-    GPIO_ClearValue(DHT11_PORT, 1U << DHT11_PIN);
-    delay_ms(30);
+    GPIO_SetValue(DHT11_PORT, 1U << DHT11_PIN);
+    delay_ms(20); 
 
+    // 1. Wysłanie impulsu START (Stan niski przez 20ms)
+    GPIO_ClearValue(DHT11_PORT, 1U << DHT11_PIN);
+    delay_ms(20);
+
+    // 2. Podniesienie linii i zwolnienie magistrali (tryb Input)
     GPIO_SetValue(DHT11_PORT, 1U << DHT11_PIN);
     delay_us(30);
     GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
 
+    // Od tego punktu, w razie błędu, skaczemy do dht_error, by przywrócić pin
     if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
-        return -1;
+        goto dht_error;
     }
     if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
-        return -1;
+        goto dht_error;
     }
-    
     if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
-        return -1;
+        goto dht_error;
     }
 
+    // 3. Odczyt strumienia 40 bitów danych
     for (i = 0; i < 40; i++) {
         if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
-            return -1;
+            goto dht_error;
         }
-        uint32_t  high_time = 0;
+        
+        uint32_t high_time = 0;
         while ((GPIO_ReadValue(DHT11_PORT) & (1U << DHT11_PIN)) !=0 ) {
             high_time++;
             delay_us(1);
@@ -305,24 +316,33 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
         }
 
         bitIndex = i / 8;
-        if (high_time > 11) {
+        if (high_time > 12) {
             data[bitIndex] |= (1U << (7 - (i % 8)));
         }
 
         if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
-            return -1;
+            goto dht_error;
         }
     }
 
+    // Weryfikacja sumy kontrolnej
     if (((data[0] + data[1] + data[2] + data[3]) & 0xFF) != data[4]) {
-        return -1;
+        goto dht_error;
     }
 
     *humidity = data[0];
     if (tempC != NULL) {
         *tempC = data[2];
     }
+    
+    // Udany odczyt - ustawiamy pin jako bezpieczne wejście i kończymy
+    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
     return 0;
+
+dht_error:
+    // Awaryjne przywrócenie pinu jako wejście w przypadku jakiegokolwiek timeoutu
+    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
+    return -1;
 }
 
 static uint32_t hcsr04_read_cm(void)
@@ -411,6 +431,9 @@ void SysTick_Handler(void)
     msTicks++;
 }
 
+/* =========================================================================
+ * GŁÓWNA FUNKCJA MAIN
+ * ========================================================================= */
 int main(void)
 {
     uint8_t rotaryState = ROTARY_WAIT;
@@ -460,15 +483,13 @@ int main(void)
     while (1)
     {
         /* =========================================================================
-         * ODCZYT I AKTUALIZACJA LUXÓW W PĘTLI GŁÓWNEJ (Błyskawiczna reakcja)
-         * Odświeżamy pomiar luksów co 50 ms bezpośrednio w while(1), bez czekania
+         * ODCZYT I AKTUALIZACJA LUXÓW W PĘTLI GŁÓWNEJ
          * ========================================================================= */
         if ((msTicks - lastLightUpdateTime) >= 50) 
         {
             lastLightUpdateTime = msTicks;
             lux = light_read();
             
-            // Od razu wyrzucamy zaktualizowaną wartość na ekran OLED
             oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
             intToString(lux, buf, 10, 10);
             oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
@@ -522,7 +543,7 @@ int main(void)
         lastCh7seg = ch7seg;
 
         /* =========================================================================
-         * MASZYNA STANÓW (Time-Slicing) - Wykonuje się co 200 ms (Pozostałe sensory)
+         * MASZYNA STANÓW (Time-Slicing) - Wykonuje się co 200 ms
          * ========================================================================= */
         if ((msTicks - lastTaskTime) >= 200)
         {
@@ -533,8 +554,7 @@ int main(void)
             switch (programStep)
             {
                 case 0:
-                    /* Krok 0: Odczyt MQ-135 */
-                    airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
+                    /* Krok 0: Przejście do właściwych pomiarów */
                     programStep = 1;
                     break;
 
@@ -542,20 +562,20 @@ int main(void)
                     /* Krok 1: Odczyt temperatury bazowej i DHT11 */
                     temp10 = temp_read();
 
-                    if ((msTicks - lastDhtTime) >= 3000) {
-                        int8_t status = dht11_read(NULL, &dhtHum);
-                        if (status == 0) {
-                            lastDhtTime = msTicks;
-                        }
+                    // Bezpieczny interwał odpytywania DHT11 (co 3.5 sekundy)
+                    if ((msTicks - lastDhtTime) >= 3500) {
+                        lastDhtTime = msTicks; // Timer odliczany zawsze (blokuje zawieszanie)
+                        dht11_read(NULL, &dhtHum); // Przy błędzie zachowa stary odczyt
                     }
                     programStep = 2;
                     break;
 
                 case 2:
-                    /* Krok 2: Wolny slot po dawnej sekcji light_read() */
+                    /* Krok 2: Odczyt MQ-135 */
+                    airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
                     programStep = 3;
                     break;
-
+                    
                 case 3:
                     /* Krok 3: Pomiar odległości */
                     distanceCm = hcsr04_read_cm();
@@ -628,7 +648,6 @@ int main(void)
         }
     }
 }
-
 
 void check_failed(uint8_t *file, uint32_t line)
 {
