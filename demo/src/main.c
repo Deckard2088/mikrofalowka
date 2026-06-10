@@ -27,20 +27,18 @@
 
 /* =========================================================================
  * KONFIGURACJA STEROWANIA SILNIKIEM
- * Pin ustawiony na 0 podczas wykonywania pętli pomiarowej, 1 podczas bezczynności
  * ========================================================================= */
 #define MOTOR_PORT      2
-#define MOTOR_PIN        0   // Możesz zmienić na inny wolny pin GPIO
+#define MOTOR_PIN        0   
 
-#define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    // Stan 1 (bezczynność)
-#define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  // Stan 0 (wykonywanie pętli)
+#define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    
+#define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  
 
 #define MQ135_DOUT_PORT 0
 #define MQ135_DOUT_PIN  16
 
 /* =========================================================================
- * KONFIGURACJA PINÓW HC-SR04
- * Upewnij się, że piny są poprawnie podłączone fizycznie!
+ * KONFIGURACJA PINÓW HC-SR04 
  * ========================================================================= */
 #define HCSR04_TRIG_PORT 2
 #define HCSR04_TRIG_PIN  4
@@ -58,7 +56,7 @@ static uint8_t buf[10];
 static uint32_t msTicks = 0;
 
 /* =========================================================================
- * FUNKCJE OPÓŹNIAJĄCE (Sterowane programowo przez pętle procesora)
+ * FUNKCJE OPÓŹNIAJĄCE
  * ========================================================================= */
 static void delay_us(uint32_t us)
 {
@@ -220,7 +218,6 @@ static void init_sensor_gpio(void)
     pinCfg.OpenDrain = 0;
     pinCfg.Pinmode = 0;
 
-    // Inicjalizacja pinu silnika jako wyjście GPIO
     pinCfg.Portnum = MOTOR_PORT;
     pinCfg.Pinnum = MOTOR_PIN;
     PINSEL_ConfigPin(&pinCfg);
@@ -412,7 +409,6 @@ int main(void)
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
-    uint32_t distanceStateProg = 1; // 0 - blisko (mniej niż 3cm), 1 - daleko (3cm lub więcej / brak odczytu)
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
@@ -505,16 +501,13 @@ int main(void)
             switch (programStep)
             {
                 case 0:
-                    /* Krok 0: Odczyt MQ-135 (DOUT) */
                     airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
                     programStep = 1;
                     break;
 
                 case 1:
-                    /* Krok 1: Odczyt temperatury z czujnika na plytce */
                     temp10 = temp_read();
 
-                    /* Odczyt DHT11 */
                     if ((msTicks - lastDhtTime) >= 3000) {
                         int8_t status = dht11_read(NULL, &dhtHum);
                         if (status == 0) {
@@ -525,26 +518,17 @@ int main(void)
                     break;
 
                 case 2:
-                    /* Krok 2: Odczyt światła (I2C) */
                     lux = light_read();
                     programStep = 3;
                     break;
 
                 case 3:
-                    /* Krok 3: Odczyt HC-SR04 i warunek progowy 3 cm */
+                    /* KROK 3: Pobieramy SUROWĄ wartość pomiaru */
                     distanceCm = hcsr04_read_cm();
-                    
-                    // Zabezpieczenie: odczyt musi być > 0 (wykryto przeszkodę) i < 3 (jest blisko)
-                    if (distanceCm > 0 && distanceCm < 3) {
-                        distanceStateProg = 0; // Blisko -> Wyświetli 0
-                    } else {
-                        distanceStateProg = 1; // Daleko lub brak odczytu -> Wyświetli 1
-                    }
                     programStep = 4;
                     break;
 
                 case 4:
-                    /* Krok 4: Aktualizacja temperatury i wilgotnosci na OLED */
                     {
                         int32_t tempAbs = temp10;
 
@@ -570,20 +554,19 @@ int main(void)
                     break;
 
                 case 5:
-                    /* Krok 5: Wyświetlanie stanu progowego (0 lub 1) na OLED */
+                    /* KROK 5: Wypisujemy dokładną wartość cm na ekranie */
                     oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
-                    intToString(distanceStateProg, buf, 10, 10);
+                    intToString(distanceCm, buf, 10, 10);
                     oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
-                    // Nadpisanie starych napisów jednostki pustymi spacjami
-                    oled_putString(60, 20, (uint8_t*)"     ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    // Pokazujemy "cm" i czyścimy stare znaki spacji
+                    oled_putString(55, 20, (uint8_t*)"cm    ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     programStep = 6;
                     break;
 
                 case 6:
-                    /* Krok 6: Czujnik gazu na OLED */
                     oled_putString(1, 35, (uint8_t*)"A: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     intToString(airDigital, buf, 10, 10);
                     oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
@@ -592,7 +575,6 @@ int main(void)
                     break;
 
                 case 7:
-                    /* Krok 7: Swiatlo na OLED */
                     oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     intToString(lux, buf, 10, 10);
                     oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
