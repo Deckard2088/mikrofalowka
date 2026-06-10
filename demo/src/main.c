@@ -30,21 +30,22 @@
  * Pin ustawiony na 0 podczas wykonywania pętli pomiarowej, 1 podczas bezczynności
  * ========================================================================= */
 #define MOTOR_PORT      2
-#define MOTOR_PIN       0   
+#define MOTOR_PIN        0   // Możesz zmienić na inny wolny pin GPIO
 
-#define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    
-#define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  
+#define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    // Stan 1 (bezczynność)
+#define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  // Stan 0 (wykonywanie pętli)
 
 #define MQ135_DOUT_PORT 0
 #define MQ135_DOUT_PIN  16
 
 #define HCSR04_TRIG_PORT 2
-#define HCSR04_TRIG_PIN  10
-#define HCSR04_ECHO_PORT 0
-#define HCSR04_ECHO_PIN  4
+#define HCSR04_TRIG_PIN  4
+#define HCSR04_ECHO_PORT 2
+#define HCSR04_ECHO_PIN  6
 
 /* =========================================================================
  * KONFIGURACJA PINU DHT11
+ * Upewnij się, że kabelek sygnałowy z czujnika jest fizycznie wpięty w P2.8!
  * ========================================================================= */
 #define DHT11_PORT 2
 #define DHT11_PIN  8  
@@ -53,11 +54,8 @@ static uint8_t ch7seg = '0';
 static uint8_t buf[10];
 static uint32_t msTicks = 0;
 
-/* Flaga alarmu odległości (1 - obiekt bliżej niż 5cm, 0 - brak przeszkody) */
-static uint8_t distance_alert = 0;
-
 /* =========================================================================
- * FUNKCJE OPÓŹNIAJĄCE 
+ * FUNKCJE OPÓŹNIAJĄCE (Sterowane programowo przez pętle procesora)
  * ========================================================================= */
 static void delay_us(uint32_t us)
 {
@@ -93,24 +91,12 @@ static uint8_t rotate7SegChar(uint8_t ch)
 
 static void refreshOutputs(void)
 {
-    /* * Modyfikacja sterowania linijką LED4-LED11:
-     * Jeśli wykryto przeszkodę poniżej 5cm, zapalamy wszystkie diody LED4...LED11 (wartość 0xFF).
-     * W przeciwnym wypadku wyświetlamy standardowy znak z enkodera.
-     */
-    if (distance_alert) 
-    {
-        led7seg_setChar(0xFF, FALSE); // Zapala wszystkie diody LED od LED4 do LED11
-        rgb_setLeds(0);               // Wyłączamy diodę RGB, bo teraz sterujemy LED4-LED11
-    } 
-    else 
-    {
-        led7seg_setChar(rotate7SegChar(ch7seg), FALSE);
+    led7seg_setChar(rotate7SegChar(ch7seg), FALSE);
 
-        if (ch7seg == '0')
-            rgb_setLeds(0);
-        else
-            rgb_setLeds(RGB_GREEN);
-    }
+    if (ch7seg == '0')
+        rgb_setLeds(0);
+    else
+        rgb_setLeds(RGB_GREEN);
 }
 
 static uint8_t change7Seg(uint8_t rotaryDir)
@@ -231,11 +217,12 @@ static void init_sensor_gpio(void)
     pinCfg.OpenDrain = 0;
     pinCfg.Pinmode = 0;
 
+    // Inicjalizacja pinu silnika jako wyjście GPIO
     pinCfg.Portnum = MOTOR_PORT;
     pinCfg.Pinnum = MOTOR_PIN;
     PINSEL_ConfigPin(&pinCfg);
     GPIO_SetDir(MOTOR_PORT, 1U << MOTOR_PIN, 1);
-    MOTOR_SET_IDLE(); 
+    MOTOR_SET_IDLE(); // Domyślnie ustawiamy stan 1 (bezczynność)
 
     pinCfg.Portnum = HCSR04_TRIG_PORT;
     pinCfg.Pinnum = HCSR04_TRIG_PIN;
@@ -509,6 +496,7 @@ int main(void)
         {
             lastTaskTime = msTicks;
 
+            // Na początku przetwarzania maszyny stanów ustawiamy silnik w stan 0 (BUSY)
             MOTOR_SET_BUSY();
 
             switch (programStep)
@@ -540,18 +528,11 @@ int main(void)
                     break;
 
                 case 3:
-                 /* Krok 3: Odczyt HC-SR04 i bezpieczny test dźwiękowy */
+                    /* Krok 3: Odczyt HC-SR04 (Pobranie realnej wartości w cm) */
                     distanceCm = hcsr04_read_cm();
+                    programStep = 4;
+                    break;
 
-    // Jeśli obiekt jest bliżej niż 5cm ORAZ akurat nie odtwarza się melodia zera
-                    if (distanceCm > 0 && distanceCm < 5 && ch7seg != '0') 
-                    {
-        // Króciutki sygnał (2000Hz, trwający tylko 15ms) działający jak sonar
-                        buzzerPlayTone(500, 15); 
-                    } 
-
-    programStep = 4;
-    break;
                 case 4:
                     /* Krok 4: Aktualizacja temperatury i wilgotnosci na OLED */
                     {
@@ -579,8 +560,15 @@ int main(void)
                     break;
 
                 case 5:
-                    /* Krok 5: Pusta linia zamiast wyswietlania czujnika odleglosci na OLED */
-                    oled_putString(1, 20, (uint8_t*)"                  ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    /* Krok 5: Realna odległość w centymetrach na ekranie OLED */
+                    oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    
+                    intToString(distanceCm, buf, 10, 10);
+                    oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    
+                    // Jednostka "cm" z dodatkowymi spacjami czyszczącymi poprzednie znaki
+                    oled_putString(60, 20, (uint8_t*)"cm   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    
                     programStep = 6;
                     break;
 
@@ -602,6 +590,7 @@ int main(void)
                     
                     programStep = 0; 
 
+                    // Koniec całego cyklu pomiarowego w tym oknie czasowym - przechodzimy w stan bezczynności (1)
                     MOTOR_SET_IDLE();
                     break;
 
