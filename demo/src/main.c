@@ -331,7 +331,6 @@ static uint32_t hcsr04_read_cm(void)
     uint32_t maxWaitUs = 30000;
     uint32_t timeoutCounter = 0;
     
-    // Zapamiętujemy stary preskaler, żeby nic nie popsuć w systemie
     uint32_t oldPR = LPC_TIM0->PR; 
 
     // 1. Wysłanie impulsu TRIG (10 us)
@@ -347,9 +346,9 @@ static uint32_t hcsr04_read_cm(void)
     }
 
     // 3. START POMIARU
-    LPC_TIM0->TCR = 0x02; // Reset licznika
-    LPC_TIM0->PR  = 24;   // WYMUSZENIE: Zliczaj dokładnie co 1 us (dla PCLK = 25MHz)
-    LPC_TIM0->TCR = 0x01; // Uruchom stoper
+    LPC_TIM0->TCR = 0x02; 
+    LPC_TIM0->PR  = 24;   // Taktowanie stopera co 1 us
+    LPC_TIM0->TCR = 0x01; 
 
     // 4. Czekamy na opadnięcie ECHO = 0
     while ((GPIO_ReadValue(HCSR04_ECHO_PORT) & (1U << HCSR04_ECHO_PIN)) != 0) {
@@ -361,8 +360,8 @@ static uint32_t hcsr04_read_cm(void)
 
     // 5. STOP POMIARU
     echoTimeUs = LPC_TIM0->TC; 
-    LPC_TIM0->TCR = 0x00;   // Zatrzymaj stoper
-    LPC_TIM0->PR  = oldPR;  // Przywracamy stary preskaler dla reszty programu
+    LPC_TIM0->TCR = 0x00;   
+    LPC_TIM0->PR  = oldPR;  
 
     return echoTimeUs / 58U;
 }
@@ -423,7 +422,7 @@ int main(void)
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
-    uint32_t distanceStateProg = 1; // 0 - blisko, 1 - daleko / brak
+    uint32_t distanceStateProg = 1; // 0 - blisko (<4cm), 1 - daleko (>=4cm)
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
@@ -538,14 +537,14 @@ int main(void)
                     break;
 
                 case 3:
-                    /* Krok 3: Precyzyjny pomiar odległości */
+                    /* Krok 3: Odczyt z czujnika */
                     distanceCm = hcsr04_read_cm();
                     
-                    // Logika progowa: 0 dla blisko (< 3cm), 1 dla daleko/braku odczytu
-                    if (distanceCm > 0 && distanceCm < 3) {
-                        distanceStateProg = 0; 
+                    // Zmiana: nowa granica progowa to 4 cm
+                    if (distanceCm > 0 && distanceCm < 4) {
+                        distanceStateProg = 0; // Poniżej 4cm -> wyświetla 0
                     } else {
-                        distanceStateProg = 1; 
+                        distanceStateProg = 1; // 4cm lub więcej / brak odczytu -> wyświetla 1
                     }
                     programStep = 4;
                     break;
@@ -576,13 +575,12 @@ int main(void)
                     break;
 
                 case 5:
-                    /* Krok 5: Wyświetlanie 0 lub 1 na ekranie OLED */
+                    /* Krok 5: Aktualizacja stanu na OLED */
                     oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     intToString(distanceStateProg, buf, 10, 10);
                     oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
-                    // Czyszczenie tła po dawnej jednostce centymetrów
                     oled_putString(40, 20, (uint8_t*)"       ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     
                     programStep = 6;
