@@ -27,21 +27,20 @@
 
 /* =========================================================================
  * KONFIGURACJA STEROWANIA SILNIKIEM
- * Pin ustawiony na 0 podczas wykonywania pętli pomiarowej, 1 podczas bezczynności
  * ========================================================================= */
 #define MOTOR_PORT      2
-#define MOTOR_PIN       0   
+#define MOTOR_PIN        0   
 
 #define MOTOR_SET_IDLE() GPIO_SetValue(MOTOR_PORT, 1U << MOTOR_PIN)    
 #define MOTOR_SET_BUSY() GPIO_ClearValue(MOTOR_PORT, 1U << MOTOR_PIN)  
 
-#define MQ135_DOUT_PORT 0
-#define MQ135_DOUT_PIN  16
+#define MQ135_DOUT_PORT 2
+#define MQ135_DOUT_PIN  10
 
 #define HCSR04_TRIG_PORT 2
-#define HCSR04_TRIG_PIN  10
-#define HCSR04_ECHO_PORT 0
-#define HCSR04_ECHO_PIN  4
+#define HCSR04_TRIG_PIN  4
+#define HCSR04_ECHO_PORT 2
+#define HCSR04_ECHO_PIN  6
 
 /* =========================================================================
  * KONFIGURACJA PINU DHT11
@@ -51,13 +50,10 @@
 
 static uint8_t ch7seg = '0';
 static uint8_t buf[10];
-static uint32_t msTicks = 0;
-
-/* Flaga alarmu odległości (1 - obiekt bliżej niż 5cm, 0 - brak przeszkody) */
-static uint8_t distance_alert = 0;
+static volatile uint32_t msTicks = 0;
 
 /* =========================================================================
- * FUNKCJE OPÓŹNIAJĄCE 
+ * FUNKCJE OPÓŹNIAJĄCE
  * ========================================================================= */
 static void delay_us(uint32_t us)
 {
@@ -93,24 +89,12 @@ static uint8_t rotate7SegChar(uint8_t ch)
 
 static void refreshOutputs(void)
 {
-    /* * Modyfikacja sterowania linijką LED4-LED11:
-     * Jeśli wykryto przeszkodę poniżej 5cm, zapalamy wszystkie diody LED4...LED11 (wartość 0xFF).
-     * W przeciwnym wypadku wyświetlamy standardowy znak z enkodera.
-     */
-    if (distance_alert) 
-    {
-        led7seg_setChar(0xFF, FALSE); // Zapala wszystkie diody LED od LED4 do LED11
-        rgb_setLeds(0);               // Wyłączamy diodę RGB, bo teraz sterujemy LED4-LED11
-    } 
-    else 
-    {
-        led7seg_setChar(rotate7SegChar(ch7seg), FALSE);
+    led7seg_setChar(rotate7SegChar(ch7seg), FALSE);
 
-        if (ch7seg == '0')
-            rgb_setLeds(0);
-        else
-            rgb_setLeds(RGB_GREEN);
-    }
+    if (ch7seg == '0')
+        rgb_setLeds(0);
+    else
+        rgb_setLeds(RGB_GREEN);
 }
 
 static uint8_t change7Seg(uint8_t rotaryDir)
@@ -277,6 +261,9 @@ static int wait_for_level(uint8_t port, uint8_t pin, uint8_t level, uint32_t tim
     return 0;
 }
 
+/* =========================================================================
+ * BEZPIECZNA FUNKCJA ODCZYTU DHT11 (Zabezpieczona przed zawieszaniem linii)
+ * ========================================================================= */
 static int dht11_read(uint8_t* tempC, uint8_t* humidity)
 {
     uint8_t data[5] = {0};
@@ -287,30 +274,38 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
         return -1;
     }
 
+    // Upewniamy się, że linia zaczyna od czystego stanu wysokiego
     GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 1);
-    GPIO_ClearValue(DHT11_PORT, 1U << DHT11_PIN);
-    delay_ms(30);
+    GPIO_SetValue(DHT11_PORT, 1U << DHT11_PIN);
+    delay_ms(20); 
 
+    // 1. Wysłanie impulsu START (Stan niski przez 20ms)
+    GPIO_ClearValue(DHT11_PORT, 1U << DHT11_PIN);
+    delay_ms(20);
+
+    // 2. Podniesienie linii i zwolnienie magistrali (tryb Input)
     GPIO_SetValue(DHT11_PORT, 1U << DHT11_PIN);
     delay_us(30);
     GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
 
+    // Od tego punktu, w razie błędu, skaczemy do dht_error, by przywrócić pin
     if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
-        return -1;
+        goto dht_error;
     }
     if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
-        return -1;
+        goto dht_error;
     }
-    
     if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
-        return -1;
+        goto dht_error;
     }
 
+    // 3. Odczyt strumienia 40 bitów danych
     for (i = 0; i < 40; i++) {
         if (wait_for_level(DHT11_PORT, DHT11_PIN, 1, 100) != 0) {
-            return -1;
+            goto dht_error;
         }
-        uint32_t  high_time = 0;
+        
+        uint32_t high_time = 0;
         while ((GPIO_ReadValue(DHT11_PORT) & (1U << DHT11_PIN)) !=0 ) {
             high_time++;
             delay_us(1);
@@ -321,49 +316,74 @@ static int dht11_read(uint8_t* tempC, uint8_t* humidity)
         }
 
         bitIndex = i / 8;
-        if (high_time > 11) {
+        if (high_time > 12) {
             data[bitIndex] |= (1U << (7 - (i % 8)));
         }
 
         if (wait_for_level(DHT11_PORT, DHT11_PIN, 0, 100) != 0) {
-            return -1;
+            goto dht_error;
         }
     }
 
+    // Weryfikacja sumy kontrolnej
     if (((data[0] + data[1] + data[2] + data[3]) & 0xFF) != data[4]) {
-        return -1;
+        goto dht_error;
     }
 
     *humidity = data[0];
     if (tempC != NULL) {
         *tempC = data[2];
     }
+    
+    // Udany odczyt - ustawiamy pin jako bezpieczne wejście i kończymy
+    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
     return 0;
+
+dht_error:
+    // Awaryjne przywrócenie pinu jako wejście w przypadku jakiegokolwiek timeoutu
+    GPIO_SetDir(DHT11_PORT, 1U << DHT11_PIN, 0);
+    return -1;
 }
 
 static uint32_t hcsr04_read_cm(void)
 {
-    uint32_t durationUs = 0;
+    uint32_t echoTimeUs = 0;
     uint32_t maxWaitUs = 30000;
+    uint32_t timeoutCounter = 0;
+    
+    uint32_t oldPR = LPC_TIM0->PR; 
 
+    // 1. Wysłanie impulsu TRIG (10 us)
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
     delay_us(2);
     GPIO_SetValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
     delay_us(10);
     GPIO_ClearValue(HCSR04_TRIG_PORT, 1U << HCSR04_TRIG_PIN);
 
+    // 2. Oczekiwanie na ECHO = 1
     if (wait_for_level(HCSR04_ECHO_PORT, HCSR04_ECHO_PIN, 1, maxWaitUs) != 0) {
-        return 0;
+        return 0; 
     }
 
+    // 3. START POMIARU
+    LPC_TIM0->TCR = 0x02; 
+    LPC_TIM0->PR  = 24;   // Taktowanie stopera co 1 us
+    LPC_TIM0->TCR = 0x01; 
+
+    // 4. Czekamy na opadnięcie ECHO = 0
     while ((GPIO_ReadValue(HCSR04_ECHO_PORT) & (1U << HCSR04_ECHO_PIN)) != 0) {
-        if (durationUs >= maxWaitUs) {
+        timeoutCounter++;
+        if (timeoutCounter > 600000) { 
             break;
         }
-        delay_us(1);
-        durationUs++;
     }
-    return durationUs / 58U;
+
+    // 5. STOP POMIARU
+    echoTimeUs = LPC_TIM0->TC; 
+    LPC_TIM0->TCR = 0x00;   
+    LPC_TIM0->PR  = oldPR;  
+
+    return echoTimeUs / 58U;
 }
 
 static void intToString(int value, uint8_t* pBuf, uint32_t len, uint32_t base)
@@ -411,17 +431,22 @@ void SysTick_Handler(void)
     msTicks++;
 }
 
+/* =========================================================================
+ * GŁÓWNA FUNKCJA MAIN
+ * ========================================================================= */
 int main(void)
 {
     uint8_t rotaryState = ROTARY_WAIT;
     uint32_t lastDecayTime = 0;
     uint32_t lastDhtTime = 0;
+    uint32_t lastLightUpdateTime = 0;
 
     uint8_t lastCh7seg = '0';
 
     uint8_t dhtHum = 0;
     int32_t temp10 = 0;
     uint32_t distanceCm = 0;
+    uint32_t distanceStateProg = 1; 
     uint32_t airDigital = 0;
     uint32_t lux = 0;
 
@@ -448,6 +473,7 @@ int main(void)
 
     lastDecayTime = msTicks;
     lastDhtTime = msTicks;
+    lastLightUpdateTime = msTicks;
 
     refreshOutputs();
 
@@ -456,6 +482,20 @@ int main(void)
 
     while (1)
     {
+        /* =========================================================================
+         * ODCZYT I AKTUALIZACJA LUXÓW W PĘTLI GŁÓWNEJ
+         * ========================================================================= */
+        if ((msTicks - lastLightUpdateTime) >= 50) 
+        {
+            lastLightUpdateTime = msTicks;
+            lux = light_read();
+            
+            oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            intToString(lux, buf, 10, 10);
+            oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+        }
+
         /* =========================================================================
          * KROK INTERWENCYJNY: ROTARY
          * ========================================================================= */
@@ -514,50 +554,42 @@ int main(void)
             switch (programStep)
             {
                 case 0:
-                    /* Krok 0: Odczyt MQ-135 (DOUT) */
-                    airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
+                    /* Krok 0: Przejście do właściwych pomiarów */
                     programStep = 1;
                     break;
 
                 case 1:
-                    /* Krok 1: Odczyt temperatury z czujnika na plytce */
+                    /* Krok 1: Odczyt temperatury bazowej i DHT11 */
                     temp10 = temp_read();
 
-                    /* Odczyt DHT11 */
-                    if ((msTicks - lastDhtTime) >= 3000) {
-                        int8_t status = dht11_read(NULL, &dhtHum);
-                        if (status == 0) {
-                            lastDhtTime = msTicks;
-                        }
+                    // Bezpieczny interwał odpytywania DHT11 (co 3.5 sekundy)
+                    if ((msTicks - lastDhtTime) >= 3500) {
+                        lastDhtTime = msTicks; // Timer odliczany zawsze (blokuje zawieszanie)
+                        dht11_read(NULL, &dhtHum); // Przy błędzie zachowa stary odczyt
                     }
                     programStep = 2;
                     break;
 
                 case 2:
-                    /* Krok 2: Odczyt światła (I2C) */
-                    lux = light_read();
+                    /* Krok 2: Odczyt MQ-135 */
+                    airDigital = (GPIO_ReadValue(MQ135_DOUT_PORT) & (1U << MQ135_DOUT_PIN)) ? 1U : 0U;
                     programStep = 3;
                     break;
-
-                case 3:
-                    /* Krok 3: Odczyt HC-SR04 i zmiana stanu flagi alarmu */
-                    distanceCm = hcsr04_read_cm();
-
-                    /* Jeśli odległość poprawna i mniejsza niż 5cm -> ustaw flagę */
-                    if (distanceCm > 0 && distanceCm < 5) {
-                        distance_alert = 1;
-                    } else {
-                        distance_alert = 0;
-                    }
                     
-                    /* Aktualizacja diod na podstawie nowej flagi */
-                    refreshOutputs();
-
+                case 3:
+                    /* Krok 3: Pomiar odległości */
+                    distanceCm = hcsr04_read_cm();
+                    
+                    if (distanceCm > 0 && distanceCm < 4) {
+                        distanceStateProg = 1; 
+                    } else {
+                        distanceStateProg = 0; 
+                    }
                     programStep = 4;
                     break;
 
                 case 4:
-                    /* Krok 4: Aktualizacja temperatury i wilgotnosci na OLED */
+                    /* Krok 4: Aktualizacja temperatury i wilgotności na OLED */
                     {
                         int32_t tempAbs = temp10;
 
@@ -583,8 +615,12 @@ int main(void)
                     break;
 
                 case 5:
-                    /* Krok 5: Pusta linia zamiast wyswietlania czujnika odleglosci na OLED */
-                    oled_putString(1, 20, (uint8_t*)"                  ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    /* Krok 5: Wyświetlanie stanu odległości na OLED */
+                    oled_putString(1, 20, (uint8_t*)"U: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    intToString(distanceStateProg, buf, 10, 10);
+                    oled_putString(20, 20, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    oled_putString(40, 20, (uint8_t*)"       ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    
                     programStep = 6;
                     break;
 
@@ -594,18 +630,13 @@ int main(void)
                     intToString(airDigital, buf, 10, 10);
                     oled_putString(20, 35, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
                     oled_putString(60, 35, (uint8_t*)"   ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+                    
                     programStep = 7;
                     break;
 
                 case 7:
-                    /* Krok 7: Swiatlo na OLED */
-                    oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    intToString(lux, buf, 10, 10);
-                    oled_putString(20, 50, buf, OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    oled_putString(60, 50, (uint8_t*)"lx ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
-                    
+                    /* Krok 7: Zamknięcie pętli pomiarowej */
                     programStep = 0; 
-
                     MOTOR_SET_IDLE();
                     break;
 
