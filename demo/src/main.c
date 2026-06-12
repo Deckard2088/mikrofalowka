@@ -1,9 +1,13 @@
 /*****************************************************************************
- * A demo example using several of the peripherals on the base board
- *
- * Copyright(C) 2010, Embedded Artists AB
- * All rights reserved.
- *
+MIKROFALÓWKA
+
+Zespół: E-09
+Termin zajęć: wtorek, 16:15
+Skład zespołu:
+-Kacper Skoczylas 254864 (lider)
+-Dawid Wachecki 254890
+-Witold Dudek 254742
+
  ******************************************************************************/
 
 #include "lpc17xx_pinsel.h"
