@@ -440,7 +440,7 @@ void SysTick_Handler(void)
  * ========================================================================= */
 int main(void)
 {
-    uint8_t rotaryState = ROTARY_WAIT;
+    //uint8_t rotaryState = ROTARY_WAIT;
     uint32_t lastDecayTime = 0;
     uint32_t lastDhtTime = 0;
     uint32_t lastLightUpdateTime = 0;
@@ -452,7 +452,7 @@ int main(void)
     uint32_t distanceCm = 0;
     uint32_t distanceStateProg = 1; 
     uint32_t airDigital = 0;
-    uint32_t lux = 0;
+    //uint32_t lux = 0;
 
     init_ssp();
     init_i2c();
@@ -492,7 +492,7 @@ int main(void)
         if ((msTicks - lastLightUpdateTime) >= 50) 
         {
             lastLightUpdateTime = msTicks;
-            lux = light_read();
+            uint32_t lux = light_read();
             
             oled_putString(1, 50, (uint8_t*)"L: ", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
             intToString(lux, buf, 10, 10);
@@ -653,7 +653,7 @@ int main(void)
     }
 }
 
-void check_failed(uint8_t *file, uint32_t line)
+void check_failed(const uint8_t *file, uint32_t line)
 {
     while(1);
 }
